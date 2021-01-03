@@ -1,0 +1,623 @@
+#! /bin/bash
+
+# This script now requires 'bash' rather than simply 'sh' in order to gain
+# array-handling capability...
+
+# shellcheck disable=SC2034
+debug=${DEBUG:-}
+trace=${TRACE:-}
+
+die() {
+	printf >&2 'FATAL: %s\n' "${*:-Unknown error}"
+	exit 1
+} # die
+
+error() {
+	[ -z "${*:-}" ] && echo || printf >&2 'ERROR: %s\n' "${*}"
+	return 1
+} # error
+
+warn() {
+	[ -z "${*:-}" ] && echo || printf >&2 'WARN:  %s\n' "${*}"
+} # warn
+
+note() {
+	[ -z "${*:-}" ] && echo || printf >&2 'NOTE:  %s\n' "${*}"
+} # note
+
+info() {
+	[ -z "${*:-}" ] && echo || printf 'INFO:  %s\n' "${*}"
+} # info
+
+print() {
+	if [ -n "${DEBUG:-}" ]; then
+		[ -z "${*:-}" ] && echo || printf >&2 'DEBUG: %s\n' "${*}"
+		return 0
+	# Unhelpful with 'set -e' ...
+	#else
+	#	return 1
+	fi
+} # print
+
+# Now we're forced to run with bash to gain arrays, this is no longer
+# necessary!
+#
+#teefail() {
+#	# pipefail doesn't exist in POSIX sh, and getting the exit code from a
+#	# none-leaf pipeline stage is... awkward.
+#	#
+#	# The general approach is:
+#	#((((someprog 3>&- 4>&-; echo $? >&3) | filter >&4) 3>&1) | (read -r xs; exit $xs)) 4>&1
+#	# or
+#	#{ { { { someprog 3>&- 4>&-; echo $? >&3; } | filter >&4; } 3>&1; } | { read -r xs; return $xs; } } 4>&1
+#	#
+#	# ... but we only need to be able to do this for 'tee'.
+#
+#	# Given that POSIX sh also only supports the one single array ${@},
+#	# argument parsing is harder that necessary here too.
+#	#
+#	# Let's assume that the 'tee' arguments will be only either the last
+#	# argument (the output filename) or the last two arguments (any flags
+#	# and the output filename).  Let us also mandate that before this must
+#	# come either '--' or '-- tee'.
+#
+#	# TODO:
+#	# Validate 'tee' command (to allow for other uses, and to ensure there
+#	# isn't another -- in ${@}
+#
+#	# Since POSIX 'sh' doesn't support local variables, run in a sub-shell...
+#	#(
+#		local tf_output=''
+#		local tf_flags=''
+#
+#		local -i tf_arg=${#}
+#		local tf_output
+#		tf_output="$( eval echo "\${${tf_arg}}" )"
+#
+#		local -i tf_separator=0
+#		local tf_value=''
+#		while [ $(( tf_separator )) -eq 0 ] && [ "${tf_arg}" -ne 1 ]; do
+#			: $(( tf_arg = tf_arg - 1 ))
+#			tf_value="$( eval echo "\${${tf_arg}}" )"
+#			case "${tf_value}" in
+#				--)
+#					tf_separator=${tf_arg}
+#					;;
+#				tee)
+#					:
+#					;;
+#				-*)
+#					tf_flags="${tf_flags:+${tf_flags} }${tf_value}"
+#					;;
+#				*)
+#					die "teefail: Error processing argument ${tf_arg} of '${*}' ('${tf_value}')"
+#					;;
+#			esac
+#		done
+#		unset tf_arg
+#		unset tf_value
+#		unset tf_separator
+#
+#		local tf_arg=''
+#		local -i tf_cleared=0
+#		for tf_arg in "${@}"; do
+#			if [ $(( ${tf_cleared:-1} )) -eq 0 ]; then
+#				set --
+#				tf_cleared=1
+#			fi
+#			case "${tf_arg}" in
+#				--)
+#					break
+#					;;
+#				[0-9-]\>\&*)
+#					continue
+#					;;
+#				\>\&[0-9-]*)
+#					continue
+#					;;
+#				*)
+#					#tf_arg="$( echo "${tf_arg}" | sed 's#"#\\"#g' | sed "s#'#\\'#g" )"
+#					set -- "${@}" "${tf_arg}"
+#					;;
+#			esac
+#		done
+#		unset tf_cleared
+#		unset tf_arg
+#
+#		local -i tf_rc=0
+#		local tf_cmd="${1}"
+#		shift
+#
+#		#{ { { { eval "${tf_cmd}" "${@}" 3>&- 4>&- ; echo ${?} >&3 ; } | tee ${tf_flags:-} "${tf_output}" >&4 ; } 3>&1 ; } | { read -r rc; exit ${tf_rc} ; } } 4>&1
+#		# shellcheck disable=SC2086
+#		{ { { { "${tf_cmd}" "${@}" 2>&1 3>&- 4>&- ; echo ${?} >&3 ; } | tee ${tf_flags:-} "${tf_output}" >&4 ; } 3>&1 ; } | { read -r rc; exit ${tf_rc} ; } } 4>&1
+#	#)
+#
+#	return ${?}
+#} # teefail
+
+# Mostly no longer needed, with Dockerfile.env ...
+#
+docker_setup() {
+#	export ARCH='amd64'
+#	export PKGHOST='docker'
+#	export PKGCACHE='/var/cache/portage/pkg'
+#	export PKGDIR="${PKGCACHE}/${ARCH}/${PKGHOST}" # /var/cache/portage/pkg/amd64/docker
+#
+#	export DISTDIR="/var/cache/portage/dist"
+#	export PORT_LOGDIR="/var/log/portage"
+#
+#	export REPOS="/var/db/repo"
+
+	export -a args=() extra=()
+	export package='' package_version='' package_name='' repo='' name='' container_name='' image="${IMAGE:-gentoo-build:latest}"
+
+	return 0
+} # docker_setup
+
+# Sets image, name, package, extra, and args based on arguments
+#
+# FIXME: This is *massively* broken for arguments with spaces - reimplement in
+#        bash with array support?
+#
+docker_parse() {
+	local dp_arg=''
+
+	if [ -z "${*:-}" ]; then
+		package='app-shells/bash'
+	else
+		for dp_arg in "${@}"; do
+			if echo "${dp_arg}" | grep -Eq -- '^-(h|-help)$'; then
+				echo >&2 "Usage: $( basename "${0}" ) [--name <container name>] [--image <source image>] <package> [emerge_args]"
+				exit 0
+
+			elif [ "${name}" = '<next>' ]; then
+				name="${dp_arg}"
+				print "Setting container name to '${name}' in $( basename "${0}" )"
+
+			elif [ "${image}" = '<next>' ]; then
+				image="${dp_arg}"
+				print "Setting source image to '${image}' in $( basename "${0}" )"
+
+			elif echo "${dp_arg}" | grep -Eq -- '^-(n|-name)(=[a-z0-9]+([._-]{1,2}[a-z0-9]+)*)?$'; then
+				if echo "${dp_arg}" | grep -Fq '=' ; then
+					name="$( echo "${dp_arg}" | cut -d'=' -f 2- )"
+					print "Setting container name to '${name}' in $( basename "${0}" )"
+				else
+					name='<next>'
+				fi
+
+			elif echo "${dp_arg}" | grep -Eq -- '^-(i|-image)(=[a-z0-9]+([._-]{1,2}[a-z0-9]+)*)?$'; then
+				if echo "${dp_arg}" | grep -Fq -- '=' ; then
+					image="$( echo "${dp_arg}" | cut -d'=' -f 2- )"
+					print "Setting source image to '${image}' in $( basename "${0}" )"
+				else
+					image='<next>'
+				fi
+
+			elif echo "${dp_arg}" | grep -q -- '^-'; then
+				#args="${args:+${args} }${dp_arg}"
+				args+=( "${dp_arg}" )
+				print "Adding argument '${dp_arg}'"
+
+			elif echo "${dp_arg}" | grep -q -- '^@'; then
+				#extra="${extra:+${extra} }${dp_arg}"
+				extra+=( "${dp_arg}" )
+				print "Adding extra argument '${dp_arg}'"
+
+			elif echo "${dp_arg}" | grep -Eq -- '((virtual|[a-z]{3,7}-[a-z]+)/)?[a-z0-9Z][a-zA-Z0-9_.+-]+(:[0-9.]+)?(::.*)?$'; then
+				# Currently category general names are between 3 and 7 ("gnustep") letters,
+				# Package names start with [023469Z] or lower-case ...
+				if [ -z "${package:-}" ]; then
+					package="${dp_arg%::*}"
+					print "Setting package to '${package}'"
+					if echo "${dp_arg}" | grep -Fq -- '::'; then
+						repo="${dp_arg#*::}"
+						print "... and repo to '${repo}'"
+					fi
+				else
+					#extra="${extra:+${extra} }${dp_arg}"
+					extra+=( "${dp_arg}" )
+					print "Adding extra argument '${dp_arg}'"
+				fi
+
+			else
+				warn "Unknown argument '${dp_arg}'"
+			fi
+		done
+		if [ "${name}" = '<next>' ]; then
+			name=''
+		fi
+		if [ "${image}" = '<next>' ]; then
+			image=''
+		fi
+
+		export args repo extra name image
+	fi
+
+	export package
+
+	unset dp_arg
+
+	return 0
+} # docker_parse
+
+# Validates package and sets container
+#
+docker_resolve() {
+	local dr_package="${1:-${package}}"
+	local prefix="${2:-buildpkg}"
+	local dr_name=''
+
+	if ! [ -x "$( command -v versionsort )" ]; then
+		die "'versionsort' not found - please install package 'app-portage/eix'"
+	fi
+
+	info "Resolving name '${dr_package}' ..."
+
+	[ -n "${trace:-}" ] && set -o xtrace
+	# Bah - 'sort -V' *doesn't* version-sort correctly when faced with
+	# Portage versions including revisions (and presumably patch-levels) :(
+	#
+	# We need a numeric suffix in order to determine the package name, but
+	# can't add one universally since pkg-1.2-0 has a name of 'pkg-1.2'...
+	dr_name="$( versionsort -n "${dr_package##*[<>=]}" 2>/dev/null )" || dr_name="$( versionsort -n "${dr_package##*[<>=]}-0" 2>/dev/null )"
+	dr_pattern='-~'
+	if [ "${FORCE_KEYWORDS:-}" = '1' ]; then
+		dr_pattern='-'
+	fi
+	dr_package="$(
+		equery --no-pipe --no-color list --portage-tree --overlay-tree "${dr_package}" |
+		grep -- '^\[' |
+		grep -v -- "^\[...\] \[.[${dr_pattern}]\] " |
+		cut -d']' -f 3- |
+		cut -d' ' -f 2- |
+		cut -d':' -f 1 |
+		xargs -r versionsort |
+		tail -n 1
+	)" || :
+	if [ -z "${dr_name:-}" ] || [ -z "${dr_package:-}" ]; then
+		warn "Failed to match portage atom to package name '${1:-${package}}'"
+		return 1
+	fi
+	dr_package="${dr_name}-${dr_package}"
+
+	package="$( echo "${dr_package}" | cut -d':' -f 1 )"
+	package_version="$( versionsort "${package}" )"
+	# shellcheck disable=SC2001 # POSIX sh compatibility
+	package_name="$( echo "${package%-${package_version}}" | sed 's/+/plus/g' )"
+	# shellcheck disable=SC2001 # POSIX sh compatibility
+	container_name="${prefix}.$( echo "${package_name}" | sed 's|/|.|g' )"
+	export package package_version package_name container_name
+
+	[ -n "${trace:-}" ] && set +o xtrace
+
+	unset dr_package
+
+	return 0
+} # docker_resolve
+
+docker_image_exists() {
+	image="${1:-${package}}"
+	version="${2:-${package_version}}"
+
+	[[ -n "${image:-}" ]] || return 1
+
+	if [[ -n "${version:-}" ]]; then
+		image="${image%-${version}}"
+	fi
+	if [[ "${image}" =~ : ]]; then
+		version="${image#*:}"
+		image="${image%:*}"
+	fi
+	if [[ "${image}" =~ \/ ]]; then
+		image="${image/\//.}"
+	fi
+
+	if ! $docker image ls "${image}" | grep -Eq -- "^(localhost/)?([^.]+\.)?${image}"; then
+		echo >&2 "docker image '${image}' not found"
+		return 1
+
+	elif ! $docker image ls "${image}:${version}" | grep -Eq -- "^(localhost/)?([^.]+\.)?${image}"; then
+		echo >&2 "docker image '${image}' found, but not version '${version}'"
+		return 1
+	fi
+
+	$docker image ls "${image}:${version}" | grep -E -- "^(localhost/)?([^.]+\.)?${image}" | awk '{ print $3 }'
+
+	return 0
+} # docker_image_exists
+
+# Launches container
+#
+docker_run() {
+	#inherit name container_name
+
+	local dr_rm='' dr_id=''
+	local -i rc=0
+	local -i rcc=0
+
+	[ -n "${name:-}" ] || dr_rm='--rm'
+
+	if [ -z "${name:-}" ] && [ -z "${container_name:-}" ]; then
+		error "One of 'name' or 'container_name' must be set"
+		return 1
+	fi
+
+	[ -n "${trace:-}" ] && set -o xtrace
+
+	trap '' INT
+	$docker ps | grep -qw -- "${name:-${container_name}}$" && $docker stop --time 2 "${name:-${container_name}}"
+	$docker ps -a | grep -qw -- "${name:-${container_name}}$" && $docker rm --volumes "${name:-${container_name}}"
+	trap - INT
+
+	if [ -z "${NO_BUILD_MOUNTS:-}" ]; then
+		if [ -d '/etc/openldap/schema' ] && [ -n "${name:-}" ] && [ "${name%-*}" = 'buildsvc' ]; then
+			DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+${DOCKER_EXTRA_MOUNTS} }--mount type=bind,source=/etc/openldap/schema/,destination=/service/etc/openldap/schema"
+		fi
+
+		# Move this logic to the service build script...
+		#
+		#if [[ "${name:-}" =~ ^buildsvc.*\.dev-db\.(mysql|mariadb)- ]]; then
+		#	mkdir -p /etc/mysql
+		#	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+${DOCKER_EXTRA_MOUNTS} }--mount type=bind,source=/etc/mysql/,destination=/service/etc/mysql"
+		#fi
+		#
+		#if [[ "${name:-}" =~ ^buildsvc.*\.dev-lang\.php- ]]; then
+		#	mkdir -p /etc/php
+		#	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+${DOCKER_EXTRA_MOUNTS} }--mount type=bind,source=/etc/php/,destination=/service/etc/php"
+		#fi
+		#
+		#if [[ "${name:-}" =~ ^buildsvc.*\.mail-filter\.postgrey- ]]; then
+		#	mkdir -p /etc/postfix
+		#	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+${DOCKER_EXTRA_MOUNTS} }--mount type=bind,source=/etc/postfix/,destination=/service/etc/postfix"
+		#fi
+		#
+		#if [[ "${name:-}" =~ ^buildsvc.*\.mail-filter\.spamassassin- ]]; then
+		#	mkdir -p /etc/mail/spamassassin /var/lib/spamassassin /usr/share/spamassassin
+		#	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+${DOCKER_EXTRA_MOUNTS} }--mount type=bind,source=/etc/mail/spamassassin/,destination=/service/etc/mail/spamassassin"
+		#	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+${DOCKER_EXTRA_MOUNTS} }--mount type=bind,source=/var/lib/spamassassin/,destination=/service/var/lib/spamassassin"
+		#	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+${DOCKER_EXTRA_MOUNTS} }--mount type=bind,source=/usr/share/spamassassin/,destination=/service/usr/share/spamassassin"
+		#fi
+	fi
+
+	# --privileged is required for portage sandboxing... or alternatively
+	# execute 'emerge' with:
+	# FEATURES="-ipc-sandbox -mount-sandbox -network-sandbox -pid-sandbox"
+	#
+	# PTRACE capability is required to build glibc (but as-of podman-2.0.0
+	# it is not permissible to specify capabilities with '--privileged')
+	#
+	# FIXME: Add -tty regardless of DOCKER_INTERACTIVE, so that the
+	# container can access details of the host terminal size
+	# *HOWEVER* this removes the ability to use ctrl+c to interrupt, so
+	# instead hard-code COLUMNS and LINES :(
+	#
+	# Adding '--init' allows tini to ensure that SIGTERM reaches child
+	# commands, not just the top-level shell process...
+	#
+	# We're now running under bash, so can use arrays to make this so much
+	# nicer!
+	local -a runargs=()
+	runargs=(
+		--init
+		--name "${name:-${container_name}}"
+		#--network slirp4netns
+		# Some code such as podman's go code tries to fetch packages from
+		# IPv6-addressable hosts...
+		--network host
+		--pids-limit 1024
+		  ${dr_rm:+--rm}
+		--ulimit nofile=1024:1024
+	)
+	if [ -z "${NO_BUILD_MOUNTS:-}" ]; then
+		# We have build-mounts, therefore assume that we're running a
+		# build container...
+		runargs+=(
+			--privileged
+		)
+	fi
+	# shellcheck disable=SC2206
+	runargs+=(
+		  ${DOCKER_DEVICES:-}
+		  ${DOCKER_ENTRYPOINT:+--entrypoint ${DOCKER_ENTRYPOINT}}
+		  ${ACCEPT_KEYWORDS:+--env ACCEPT_KEYWORDS}
+		  ${ACCEPT_LICENSE:+--env ACCEPT_LICENSE}
+		  #${KBUILD_OUTPUT:+--env KBUILD_OUTPUT}
+		  #${KERNEL_DIR:+--env KERNEL_DIR}
+		  #${KV_OUT_DIR:+--env KV_OUT_DIR}
+		  ${PYTHON_SINGLE_TARGET:+--env PYTHON_SINGLE_TARGET}
+		  ${PYTHON_TARGETS:+--env PYTHON_TARGETS}
+		  #${DOCKER_INTERACTIVE:+--env COLUMNS="$( tput cols 2>/dev/null )" --env LINES="$( tput lines 2>/dev/null )"}
+		--env COLUMNS="$( tput cols 2>/dev/null )" --env LINES="$( tput lines 2>/dev/null )"
+		  ${DEBUG:+--env DEBUG}
+		  # FIXME: DEV_MODE currently hard-codes entrypoint.sh.build ...
+		  ${DEV_MODE:+--env DEV_MODE --volume "${PWD%/}/gentoo-base/entrypoint.sh.build:/usr/libexec/entrypoint.sh:ro"}
+		  ${FEATURES:+--env FEATURES}
+		  ${ROOT:+--env ROOT --env SYSROOT --env PORTAGE_CONFIGROOT}
+		  ${TERM:+--env TERM}
+		  ${TRACE:+--env TRACE}
+		  ${USE:+--env "USE=${USE}"}
+		  ${DOCKER_VARS:-}
+		  ${DOCKER_INTERACTIVE:+--interactive --tty}
+		  ${DOCKER_PRIVILEGED:+--privileged}
+		  ${DOCKER_EXTRA_MOUNTS:-}
+		  ${DOCKER_VOLUMES:-}
+		  ${DOCKER_HOSTNAME:+--hostname ${DOCKER_HOSTNAME}}
+	)
+	if [ -z "${NO_BUILD_MOUNTS:-}" ]; then
+		local -a mirrormountpoints=()
+		local -a mirrormountpointsro=()
+		local -A mountpoints=()
+		local -A mountpointsro=()
+		local cwd='' mp='' src=''
+		local -i skipped=0
+
+		mirrormountpointsro=(
+			/etc/portage/repos.conf
+			$( portageq get_repo_path "${EROOT:-/}" $( portageq get_repos "${EROOT:-/}" ) )
+			#/usr/src  # Breaks gentoo-kernel-build package
+			#/var/db/repo/container
+			#/var/db/repo/gentoo
+			#/var/db/repo/srcshelton
+			#/var/db/repo/compat
+		)
+		mirrormountpoints=(
+			#/var/cache/portage/dist
+			"$( portageq distdir )"
+			/var/log/portage
+		)
+		mountpoints["$( portageq pkgdir )"]="/var/cache/portage/pkg/${ARCH:-amd64}/docker"
+
+		cwd="$( dirname "$( readlink -e "${BASH_SOURCE[$(( ${#BASH_SOURCE[@]} - 1 ))]}" )" )"
+		print "Volume/mount base directory is '${cwd}'"
+
+		#mountpointsro["${cwd}/gentoo-base/etc/portage/package.accept_keywords"]='/etc/portage/package.accept_keywords'
+		#mountpointsro["${cwd}/gentoo-base/etc/portage/package.license"]='/etc/portage/package.license'
+		#mountpointsro["${cwd}/gentoo-base/etc/portage/package.use.build"]='/etc/portage/package.use'
+
+		for mp in ${mirrormountpointsro[@]+"${mirrormountpointsro[@]}"}; do
+			[ -n "${mp:-}" ] || continue
+			src="$( readlink -e "${mp}" )"
+			if [ -z "${src:-}" ]; then
+				warn "Skipping mountpoint '${mp}'"
+				: $(( skipped = skipped + 1 ))
+				continue
+			fi
+			runargs+=( --mount "type=bind,source=${mp},destination=${mp}${docker_readonly:+,${docker_readonly}}" )
+		done
+		for mp in ${mirrormountpoints[@]+"${mirrormountpoints[@]}"}; do
+			[ -n "${mp:-}" ] || continue
+			src="$( readlink -e "${mp}" )"
+			if [ -z "${src:-}" ]; then
+				warn "Skipping mountpoint '${mp}'"
+				: $(( skipped = skipped + 1 ))
+				continue
+			fi
+			runargs+=( --mount "type=bind,source=${mp},destination=${mp}" )
+		done
+		for mp in ${mountpointsro[@]+"${!mountpointsro[@]}"}; do
+			[ -n "${mp:-}" ] || continue
+			src="$( readlink -e "${mp}" )"
+			if [ -z "${src:-}" ]; then
+				warn "Skipping mountpoint '${mp}' -> '${mountpointsro[${mp}]}'"
+				: $(( skipped = skipped + 1 ))
+				continue
+			fi
+			runargs+=( --mount "type=bind,source=${src},destination=${mountpointsro[${mp}]}${docker_readonly:+,${docker_readonly}}" )
+		done
+		for mp in ${mountpoints[@]+"${!mountpoints[@]}"}; do
+			[ -n "${mp:-}" ] || continue
+			src="$( readlink -e "${mp}" )"
+			if [ -z "${src:-}" ]; then
+				warn "Skipping mountpoint '${mp}' -> '${mountpoints[${mp}]}'"
+				: $(( skipped = skipped + 1 ))
+				continue
+			fi
+			runargs+=( --mount "type=bind,source=${src},destination=${mountpoints[${mp}]}" )
+		done
+
+		if [ $(( skipped )) -eq 1 ]; then
+			warn "${skipped} mount-points not connected to container"
+			sleep 5
+		fi
+
+		unset src mp
+	fi
+
+	(
+		[ -n "${DOCKER_CMD:-}" ] && set -- "${DOCKER_CMD}"
+		echo >&2 "Starting build container with command '$docker run ${runargs[*]} ${image:-${IMAGE:-gentoo-build:latest}} ${@+"${@}"}'"
+		$docker run \
+				"${runargs[@]}" \
+			"${image:-${IMAGE:-gentoo-build:latest}}" ${@+"${@}"}
+	)
+	rc=${?}
+	if dr_id="$( $docker ps -a | grep -- "\s${name:-${container_name}}$" | awk '{ prnt $1 }' )" && [ -n "${dr_id:-}" ]; then
+		rcc=$( $docker inspect --format='{{.State.ExitCode}}' "${dr_id}" ) || :
+	fi
+
+	if [ -n "${rcc:-}" ] && [ "${rc}" -ne "${rcc}" ]; then
+		if [ "${rc}" -gt "${rcc}" ]; then
+			warn "Return code (${rc}) differs from container exit code (${rcc}) - proceeding with former ..."
+		else
+			warn "Return code (${rc}) differs from container exit code (${rcc}) - proceeding with latter ..."
+			rc=${rcc}
+		fi
+	else
+		print "'${docker} run' returned '${rc}'"
+	fi
+
+	[ -n "${trace:-}" ] && set +o xtrace
+
+	# shellcheck disable=SC2086
+	return ${rc}
+} # docker_run
+
+# Invokes container launch with package-build arguments
+#
+docker_build_pkg() {
+	[ -n "${USE:-}" ] && info "USE override: '${USE}'"
+
+	# shellcheck disable=SC2016
+	echo "Building package '${package}' ${extra[*]+plus additional packages '${extra[*]}' }into container '${name:-${container_name}}' ..."
+
+	# shellcheck disable=SC2086
+	docker_run "=${package}${repo:+::${repo}}" ${extra[@]+"${extra[@]}"} ${args[@]+"${args[@]}"}
+
+	return ${?}
+} # docker_build_pkg
+
+# Garbage collect
+#
+docker_prune() {
+	#$docker system prune --all --filter 'until=24h' --filter 'label!=build' --filter 'label!=build.system' --force # --volumes
+	# volumes can't be pruned with a filter :(
+	#$docker volume prune --force
+
+	trap '' INT
+	# shellcheck disable=SC2086
+	$docker ps | rev | cut -d' ' -f 1 | rev | grep -- '_' | xargs -r $docker stop --time 2
+	# shellcheck disable=SC2086
+	$docker ps -a | rev | cut -d' ' -f 1 | rev | grep -- '_' | xargs -r $docker rm --volumes
+
+	# shellcheck disable=SC2086
+	$docker image ls | grep -- '^<none>\s\+<none>' | awk '{ print $3 }' | xargs -r $docker image rm
+	trap - INT
+
+	return 0
+} # docker_prune
+
+# Default entrypoint
+#
+docker_build() {
+	if [ -z "${*:-}" ]; then
+		warn "No options passed to 'docker_build()'"
+	fi
+
+	docker_setup || return ${?}
+	docker_parse ${@+"${@}"} || return ${?}
+	docker_resolve || return ${?}
+	docker_build_pkg || return ${?}
+	#docker_prune
+
+	return ${?}
+} # docker_build
+
+if ! echo " ${*:-} " | grep -Eq -- ' -(h|-help) '; then
+	if [ -n "${IMAGE:-}" ]; then
+		info "Using default image '${IMAGE}'"
+	else
+		warn "No default '\${IMAGE}' specified"
+	fi
+fi
+
+if command -v podman >/dev/null 2>&1; then
+	docker='podman'
+
+	# From release 2.0.0, podman should accept docker 'readonly' attributes
+	docker_readonly='ro=true'
+	#extra_build_args='--format docker'
+fi
+
+# vi: set syntax=sh:

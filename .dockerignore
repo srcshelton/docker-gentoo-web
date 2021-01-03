@@ -1,0 +1,11 @@
+**/.*.sw[a-p]
+
+README.md
+webapps.conf
+gentoo-build-web.docker
+
+.git
+content/.git
+content/.gitignore
+
+# vi: set syntax=cfg:
