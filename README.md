@@ -1,5 +1,10 @@
 # docker-gentoo-web
 
+N.B. In order to build the container image from this repo, the base images
+     built by
+     [docker-gentoo-build](https://github.com/srcshelton/docker-gentoo-build)
+     must be present on or available to the local system.
+
 To make use of the content container which this repo builds, you need to follow
 these steps:
 
