@@ -78,9 +78,9 @@ vhost_hostname="localhost"
 vhost_server="apache"
 
 # which user should own config files?
-# the default is the user currently running webapp-config (which is 
-# normally the root user). You may either use the numerical uid or the 
-# user name. The internal default is "0" to accomodate for BSD style 
+# the default is the user currently running webapp-config (which is
+# normally the root user). You may either use the numerical uid or the
+# user name. The internal default is "0" to accomodate for BSD style
 # systems.
 #
 # you can override this setting by using the -u switch to webapp-config
@@ -90,7 +90,7 @@ vhost_server="apache"
 # which group should own config files?
 # the default is the group of the user currently running webapp-config
 # (which is normally the root group). You may either use the numerical
-# gid or the group name. The internal default is "0" to accomodate for 
+# gid or the group name. The internal default is "0" to accomodate for
 # BSD style systems.
 #
 # you can override this setting by using the -g switch to webapp-config
@@ -99,7 +99,7 @@ vhost_server="apache"
 
 # what type of shared directories should be created?
 # the default is 'default-owned', which means that each install of the app
-# gets a copy of the directory 
+# gets a copy of the directory
 #
 # permitted values are: server-owned, config-owned, default-owned
 #
@@ -173,7 +173,7 @@ vhost_htdocs_secure="htdocs-secure"
 # permissions.  You can change them here to comply with your local
 # security policies.
 # You need to specify octal values ("0nnn") or you can use the encoding
-# used by chmod ("[ugoa]{1,3}[+-=]{rwx]{1,3}" elements as a comma 
+# used by chmod ("[ugoa]{1,3}[+-=]{rwx]{1,3}" elements as a comma
 # seperated list)
 
 vhost_perms_serverowned_dir="0775"

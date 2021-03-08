@@ -182,7 +182,7 @@ RUN find /usr/share/doc/ \
             | cut -d'/' -f 5-6 \
             | sed 's|/|-|' \
             | while read -r w; do \
-                echo -n "-not -name ${w} "; \
+                echo -n "-not -name \"${w}\" "; \
             done \
         ) \
         -exec rm -r {} + && \
@@ -203,7 +203,9 @@ RUN find /usr/share/doc/ \
 # Deploy configuration and relocate (remaining) documentation, info-pages, and
 # manpages for later collection using '--volumes-from' ...
 #
-RUN ( \
+# linter ignore=ER0003
+RUN { set -o pipefail 2>/dev/null || true ; } ; \
+    ( \
         handle_object() { \
             src="${1:-}" ; \
             dst="${2:-}" ; \
@@ -284,6 +286,7 @@ USER "${service_user}:${service_group}"
 VOLUME ["/srv/web-content","/var/www"]
 
 # Must be shell-form ...
+# linter ignore=EJ0002
 CMD "${service_cmd}"
 
 # vi: set syntax=dockerfile expandtab sw=4 ts=4 nowrap colorcolumn=80:

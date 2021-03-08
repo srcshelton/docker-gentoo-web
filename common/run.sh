@@ -1,37 +1,90 @@
-#! /bin/bash
+#! /usr/bin/env bash
 
 # This script now requires 'bash' rather than simply 'sh' in order to gain
 # array-handling capability...
+
+# Tiny
+#: "${PODMAN_MEMORY_RESERVATION:=256m}"
+#: "${PODMAN_MEMORY_LIMIT:=512m}"
+#: "${PODMAN_SWAP_LIMIT:=1g}"
+# Small"
+#: "${PODMAN_MEMORY_RESERVATION:=512m}"
+#: "${PODMAN_MEMORY_LIMIT:=1g}"
+#: "${PODMAN_SWAP_LIMIT:=2g}"
+# Medium"
+#: "${PODMAN_MEMORY_RESERVATION:=1g}"
+#: "${PODMAN_MEMORY_LIMIT:=2g}"
+#: "${PODMAN_SWAP_LIMIT:=4g}"
+# Large"
+#: "${PODMAN_MEMORY_RESERVATION:=2g}"
+#: "${PODMAN_MEMORY_LIMIT:=4g}"
+#: "${PODMAN_SWAP_LIMIT:=8g}"
+# Extra-Large"
+#: "${PODMAN_MEMORY_RESERVATION:=4g}"
+#: "${PODMAN_MEMORY_LIMIT:=8g}"
+#: "${PODMAN_SWAP_LIMIT:=16g}"
+# XXL"
+: "${PODMAN_MEMORY_RESERVATION:=8g}"
+: "${PODMAN_MEMORY_LIMIT:=16g}"
+: "${PODMAN_SWAP_LIMIT:=24g}"
 
 # shellcheck disable=SC2034
 debug=${DEBUG:-}
 trace=${TRACE:-}
 
+output() {
+	if [ -z "${*:-}" ]; then
+		echo
+	else
+		echo -e "${*:-}"
+	fi
+} # output
+
 die() {
-	printf >&2 'FATAL: %s\n' "${*:-Unknown error}"
+	output >&2 "FATAL: ${*:-Unknown error}"
 	exit 1
 } # die
 
 error() {
-	[ -z "${*:-}" ] && echo || printf >&2 'ERROR: %s\n' "${*}"
+	if [ -z "${*:-}" ]; then
+		output >&2
+	else
+		output >&2 "ERROR: ${*}"
+	fi
 	return 1
 } # error
 
 warn() {
-	[ -z "${*:-}" ] && echo || printf >&2 'WARN:  %s\n' "${*}"
+	if [ -z "${*:-}" ]; then
+		output >&2
+	else
+		output >&2 "WARN:  ${*}"
+	fi
 } # warn
 
 note() {
-	[ -z "${*:-}" ] && echo || printf >&2 'NOTE:  %s\n' "${*}"
+	if [ -z "${*:-}" ]; then
+		output >&2
+	else
+		output >&2 "NOTE:  ${*}"
+	fi
 } # note
 
 info() {
-	[ -z "${*:-}" ] && echo || printf 'INFO:  %s\n' "${*}"
+	if [ -z "${*:-}" ]; then
+		output
+	else
+		output "INFO:  ${*}"
+	fi
 } # info
 
 print() {
 	if [ -n "${DEBUG:-}" ]; then
-		[ -z "${*:-}" ] && echo || printf >&2 'DEBUG: %s\n' "${*}"
+		if [ -z "${*:-}" ]; then
+			output >&2
+		else
+			output >&2 "DEBUG: ${*}"
+		fi
 		return 0
 	# Unhelpful with 'set -e' ...
 	#else
@@ -139,18 +192,75 @@ print() {
 # Mostly no longer needed, with Dockerfile.env ...
 #
 docker_setup() {
-#	export ARCH='amd64'
-#	export PKGHOST='docker'
-#	export PKGCACHE='/var/cache/portage/pkg'
-#	export PKGDIR="${PKGCACHE}/${ARCH}/${PKGHOST}" # /var/cache/portage/pkg/amd64/docker
-#
-#	export DISTDIR="/var/cache/portage/dist"
-#	export PORT_LOGDIR="/var/log/portage"
-#
-#	export REPOS="/var/db/repo"
+	# The following definitions have been moved to Dockerfile.env:
+	#
+	#export ARCH='amd64'
+	#export PKGHOST='docker'
+	#export PKGCACHE='/var/cache/portage/pkg'
+	#export PKGDIR="${PKGCACHE}/${ARCH}/${PKGHOST}" # /var/cache/portage/pkg/amd64/docker
+	#
+	#export DISTDIR="/var/cache/portage/dist"
+	#export PORT_LOGDIR="/var/log/portage"
+	#
+	#export REPOS="/var/db/repo"
 
 	export -a args=() extra=()
 	export package='' package_version='' package_name='' repo='' name='' container_name='' image="${IMAGE:-gentoo-build:latest}"
+
+	# 'docker_arch' is the 'ARCH' component of Docker's 'platform' string, and
+	# is used to ensure that the correct image is pulled when multi-arch images
+	# are employed.
+	#
+	# 'arch' is the default system architecutre, as featured in the Gentoo
+	# ACCEPT_KEYWORDS declarations - for all permissible values, see
+	# the values of the portage 'USE_EXPAND_VALUES_ARCH' variable currently:
+	#
+	# alpha amd64 amd64-fbsd amd64-linux arm arm64 arm64-macos hppa ia64 m68k
+	# mips ppc ppc64 ppc64-linux ppc-macos riscv s390 sparc sparc64-solaris
+	# sparc-solaris x64-cygwin x64-macos x64-solaris x64-winnt x86 x86-fbsd
+	# x86-linux x86-solaris x86-winnt
+	#
+	# If ARCH is set, this will be used as an override in preference to the
+	# values defained below:
+	#
+
+	# shellcheck disable=SC2034
+	case "$( uname -m )" in
+		aarch64)
+			docker_arch='arm64'
+			arch='arm64'
+			profile='17.0'
+			#chost='aarch64-unknown-linux-gnu'  # default
+			chost='aarch64-pc-linux-gnu'
+			;;
+		armv6l)
+			docker_arch='amd/v6'
+			arch='arm'
+			profile='17.0/armv6j'
+			chost='armv6j-hardfloat-linux-gnueabihf'
+			;;
+		arm7l)
+			docker_arch='amd/v7'
+			arch='arm'
+			profile='17.0/armv7a'
+			chost='armv7a-hardfloat-linux-gnueabihf'
+			;;
+		i386|i686)  # Untested!
+			docker_arch='i386'
+			arch='x86'
+			profile='17.0'
+			chost='i686-pc-linux-gnu'
+			;;
+		x86_64|amd64)
+			docker_arch='amd64'
+			arch='amd64'
+			profile='17.1/no-multilib'
+			chost='x86_64-pc-linux-gnu'
+			;;
+		*)
+			die "Unknown architecture '$( uname -m )'"
+			;;
+	esac
 
 	return 0
 } # docker_setup
@@ -168,7 +278,7 @@ docker_parse() {
 	else
 		for dp_arg in "${@}"; do
 			if echo "${dp_arg}" | grep -Eq -- '^-(h|-help)$'; then
-				echo >&2 "Usage: $( basename "${0}" ) [--name <container name>] [--image <source image>] <package> [emerge_args]"
+				output >&2 "Usage: $( basename "${0}" ) [--name <container name>] [--image <source image>] <package> [emerge_args]"
 				exit 0
 
 			elif [ "${name}" = '<next>' ]; then
@@ -253,7 +363,7 @@ docker_resolve() {
 		die "'versionsort' not found - please install package 'app-portage/eix'"
 	fi
 
-	info "Resolving name '${dr_package}' ..."
+	print "Resolving name '${dr_package}' ..."
 
 	[ -n "${trace:-}" ] && set -o xtrace
 	# Bah - 'sort -V' *doesn't* version-sort correctly when faced with
@@ -266,6 +376,26 @@ docker_resolve() {
 	if [ "${FORCE_KEYWORDS:-}" = '1' ]; then
 		dr_pattern='-'
 	fi
+	# Ensure that ebuilds keyworded for building are checked when confirming
+	# the package to build...
+	if ! [[ -d /etc/portage/package.accept_keywords ]]; then
+		die "'/etc/portage/package.accept_keywords' must be a directory not a file"
+	else
+		if [[ -e "${PWD%/}/gentoo-base/etc/portage/package.accept_keywords" ]]; then
+			TMP_KEYWORDS="$( mktemp -p /etc/portage/package.accept_keywords/ "$( basename "${0}" ).XXXXXXXX" )"
+			if ! [[ -e "${TMP_KEYWORDS:-}" ]]; then
+				unset TMP_KEYWORDS
+			else
+				# shellcheck disable=SC2064
+				trap "test -e '${TMP_KEYWORDS:-}' && rm -f '${TMP_KEYWORDS:-}'" SIGHUP SIGINT SIGQUIT
+				if [[ -d "${PWD%/}/gentoo-base/etc/portage/package.accept_keywords" ]]; then
+					cat "${PWD%/}/gentoo-base/etc/portage/package.accept_keywords"/* > "${TMP_KEYWORDS}"
+				elif [[ -s "${PWD%/}/gentoo-base/etc/portage/package.accept_keywords" ]]; then
+					cat "${PWD%/}/gentoo-base/etc/portage/package.accept_keywords" > "${TMP_KEYWORDS}"
+				fi
+			fi
+		fi
+	fi
 	dr_package="$(
 		equery --no-pipe --no-color list --portage-tree --overlay-tree "${dr_package}" |
 		grep -- '^\[' |
@@ -276,6 +406,11 @@ docker_resolve() {
 		xargs -r versionsort |
 		tail -n 1
 	)" || :
+	if [[ -n "${TMP_KEYWORDS:-}" ]] && [[ -e "${TMP_KEYWORDS}" ]]; then
+		rm "${TMP_KEYWORDS}"
+		trap - SIGHUP SIGINT SIGQUIT
+		unset TMP_KEYWORDS
+	fi
 	if [ -z "${dr_name:-}" ] || [ -z "${dr_package:-}" ]; then
 		warn "Failed to match portage atom to package name '${1:-${package}}'"
 		return 1
@@ -315,11 +450,11 @@ docker_image_exists() {
 	fi
 
 	if ! $docker image ls "${image}" | grep -Eq -- "^(localhost/)?([^.]+\.)?${image}"; then
-		echo >&2 "docker image '${image}' not found"
+		error "docker image '${image}' not found"
 		return 1
 
 	elif ! $docker image ls "${image}:${version}" | grep -Eq -- "^(localhost/)?([^.]+\.)?${image}"; then
-		echo >&2 "docker image '${image}' found, but not version '${version}'"
+		erro "docker image '${image}' found, but not version '${version}'"
 		return 1
 	fi
 
@@ -433,6 +568,8 @@ docker_run() {
 		  ${DEBUG:+--env DEBUG}
 		  # FIXME: DEV_MODE currently hard-codes entrypoint.sh.build ...
 		  ${DEV_MODE:+--env DEV_MODE --volume "${PWD%/}/gentoo-base/entrypoint.sh.build:/usr/libexec/entrypoint.sh:ro"}
+		  ${ECLASS_OVERRIDE:+--env "ECLASS_OVERRIDE=${ECLASS_OVERRIDE}"}
+		  ${EMERGE_OPTS:+--env "EMERGE_OPTS=${EMERGE_OPTS}"}
 		  ${FEATURES:+--env FEATURES}
 		  ${ROOT:+--env ROOT --env SYSROOT --env PORTAGE_CONFIGROOT}
 		  ${TERM:+--env TERM}
@@ -445,16 +582,27 @@ docker_run() {
 		  ${DOCKER_VOLUMES:-}
 		  ${DOCKER_HOSTNAME:+--hostname ${DOCKER_HOSTNAME}}
 	)
+	if [[ -r /proc/cgroups ]] && grep -q -- '^memory.*1$' /proc/cgroups &&
+		[[ -n "${PODMAN_MEMORY_RESERVATION:-}" || -n "${PODMAN_MEMORY_LIMIT}" || -n "${PODMAN_SWAP_LIMIT}" ]]
+	then
+		runargs+=(
+			${PODMAN_MEMORY_RESERVATION:+--memory-reservation ${PODMAN_MEMORY_RESERVATION}}
+			${PODMAN_MEMORY_LIMIT:+--memory ${PODMAN_MEMORY_LIMIT}}
+			${PODMAN_SWAP_LIMIT:+--memory-swap ${PODMAN_SWAP_LIMIT}}
+		)
+	fi
 	if [ -z "${NO_BUILD_MOUNTS:-}" ]; then
 		local -a mirrormountpoints=()
 		local -a mirrormountpointsro=()
 		local -A mountpoints=()
 		local -A mountpointsro=()
-		local cwd='' mp='' src=''
 		local -i skipped=0
+		local mp='' src=''  # cwd=''
 
+		# shellcheck disable=SC2046,SC2207
 		mirrormountpointsro=(
-			/etc/portage/repos.conf
+			# We need write access to be able to update eclasses...
+			#/etc/portage/repos.conf
 			$( portageq get_repo_path "${EROOT:-/}" $( portageq get_repos "${EROOT:-/}" ) )
 			#/usr/src  # Breaks gentoo-kernel-build package
 			#/var/db/repo/container
@@ -467,18 +615,30 @@ docker_run() {
 			"$( portageq distdir )"
 			/var/log/portage
 		)
-		mountpoints["$( portageq pkgdir )"]="/var/cache/portage/pkg/${ARCH:-amd64}/docker"
 
-		cwd="$( dirname "$( readlink -e "${BASH_SOURCE[$(( ${#BASH_SOURCE[@]} - 1 ))]}" )" )"
-		print "Volume/mount base directory is '${cwd}'"
+		if [ -z "${arch:-}" ]; then
+			docker_setup
+		fi
 
+		#ENV PKGDIR="${PKGCACHE:-/var/cache/portage/pkg}/${ARCH:-amd64}/${PKGHOST:-docker}"
+		local PKGCACHE="${PKGCACHE:=/var/cache/portage/pkg}"
+		local PKGHOST="${PKGHOST:=docker}"
+		local PKGDIR="${PKGDIR:=$( portageq pkgdir )}"
+
+		# Allow use of 'ARCH' variable as an override...
+		print "Using architecture '${ARCH:-${arch}}' ..."
+		mountpoints["${PKGDIR}"]="/var/cache/portage/pkg/${ARCH:-${arch}}/docker"
+		mountpoints['/etc/portage/repos.conf']='/etc/portage/repos.conf.host'
+
+		#cwd="$( dirname "$( readlink -e "${BASH_SOURCE[$(( ${#BASH_SOURCE[@]} - 1 ))]}" )" )"
+		#print "Volume/mount base directory is '${cwd}'"
 		#mountpointsro["${cwd}/gentoo-base/etc/portage/package.accept_keywords"]='/etc/portage/package.accept_keywords'
 		#mountpointsro["${cwd}/gentoo-base/etc/portage/package.license"]='/etc/portage/package.license'
 		#mountpointsro["${cwd}/gentoo-base/etc/portage/package.use.build"]='/etc/portage/package.use'
 
 		for mp in ${mirrormountpointsro[@]+"${mirrormountpointsro[@]}"}; do
 			[ -n "${mp:-}" ] || continue
-			src="$( readlink -e "${mp}" )"
+			src="$( readlink -e "${mp}" )" || die "readlink() on '${mp}' failed: ${?}"
 			if [ -z "${src:-}" ]; then
 				warn "Skipping mountpoint '${mp}'"
 				: $(( skipped = skipped + 1 ))
@@ -488,7 +648,7 @@ docker_run() {
 		done
 		for mp in ${mirrormountpoints[@]+"${mirrormountpoints[@]}"}; do
 			[ -n "${mp:-}" ] || continue
-			src="$( readlink -e "${mp}" )"
+			src="$( readlink -e "${mp}" )" || die "readlink() on '${mp}' failed: ${?}"
 			if [ -z "${src:-}" ]; then
 				warn "Skipping mountpoint '${mp}'"
 				: $(( skipped = skipped + 1 ))
@@ -498,7 +658,7 @@ docker_run() {
 		done
 		for mp in ${mountpointsro[@]+"${!mountpointsro[@]}"}; do
 			[ -n "${mp:-}" ] || continue
-			src="$( readlink -e "${mp}" )"
+			src="$( readlink -e "${mp}" )" || die "readlink() on '${mp}' failed: ${?}"
 			if [ -z "${src:-}" ]; then
 				warn "Skipping mountpoint '${mp}' -> '${mountpointsro[${mp}]}'"
 				: $(( skipped = skipped + 1 ))
@@ -508,7 +668,7 @@ docker_run() {
 		done
 		for mp in ${mountpoints[@]+"${!mountpoints[@]}"}; do
 			[ -n "${mp:-}" ] || continue
-			src="$( readlink -e "${mp}" )"
+			src="$( readlink -e "${mp}" )" || die "readlink() on '${mp}' failed (do you need to set 'PKGDIR'?): ${?}"
 			if [ -z "${src:-}" ]; then
 				warn "Skipping mountpoint '${mp}' -> '${mountpoints[${mp}]}'"
 				: $(( skipped = skipped + 1 ))
@@ -527,7 +687,7 @@ docker_run() {
 
 	(
 		[ -n "${DOCKER_CMD:-}" ] && set -- "${DOCKER_CMD}"
-		echo >&2 "Starting build container with command '$docker run ${runargs[*]} ${image:-${IMAGE:-gentoo-build:latest}} ${@+"${@}"}'"
+		print "Starting build container with command '$docker run ${runargs[*]} ${image:-${IMAGE:-gentoo-build:latest}} ${*}'"
 		$docker run \
 				"${runargs[@]}" \
 			"${image:-${IMAGE:-gentoo-build:latest}}" ${@+"${@}"}
@@ -560,7 +720,7 @@ docker_build_pkg() {
 	[ -n "${USE:-}" ] && info "USE override: '${USE}'"
 
 	# shellcheck disable=SC2016
-	echo "Building package '${package}' ${extra[*]+plus additional packages '${extra[*]}' }into container '${name:-${container_name}}' ..."
+	info "Building package '${package}' ${extra[*]+plus additional packages '${extra[*]}' }into container '${name:-${container_name}}' ..."
 
 	# shellcheck disable=SC2086
 	docker_run "=${package}${repo:+::${repo}}" ${extra[@]+"${extra[@]}"} ${args[@]+"${args[@]}"}
@@ -612,12 +772,18 @@ if ! echo " ${*:-} " | grep -Eq -- ' -(h|-help) '; then
 	fi
 fi
 
-if command -v podman >/dev/null 2>&1; then
+# Are we using docker or podman?
+if ! command -v podman >/dev/null 2>&1; then
+	docker='docker'
+
+	#extra_build_args=''
+	docker_readonly='readonly'
+else
 	docker='podman'
 
+	#extra_build_args='--format docker'
 	# From release 2.0.0, podman should accept docker 'readonly' attributes
 	docker_readonly='ro=true'
-	#extra_build_args='--format docker'
 fi
 
-# vi: set syntax=sh:
+# vi: set syntax=sh nowrap:

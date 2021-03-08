@@ -6,6 +6,7 @@ set -o pipefail
 cd "$( dirname "$( readlink -e "${0}" )" )" || exit 1
 
 build_name=''
+# shellcheck disable=SC2034 # Set from common/vars.sh
 use_essential=''
 docker='docker'
 docker_readonly=''
@@ -45,6 +46,16 @@ fs_name=''
 export container_name package_name
 echo "${service}" | grep -Fq -- '::' && repo="${service#*::}"
 
+if [ $(( $# )) -gt 1 ] || echo " ${*:-} " | grep -Eq -- ' -(h|-help) '; then
+	output >&2 "Usage: $( basename "${0}" ) [--force]"
+	output >&2
+	output >&2 "Options:"
+	output >&2 "        --force : Always rebuild '${package_name}:${package_version}' root image"
+	output >&2
+	exit 0
+fi
+
+
 if [ "${container_name}" = 'podman' ]; then
 	die "Suspicious container name '${container_name}'"
 else
@@ -78,15 +89,17 @@ if [ -s webapps.conf ]; then
 	eval "$(
 		# shellcheck disable=SC1091
 		. ./webapps.conf # >/dev/null 2>&1
-		export -p | grep -E -- ' (webapp_(pkgs|use)|php_extra_use)='
+		#export -p | grep -E -- ' (webapp_(pkgs|use)|php_extra_use)='
+		export -p | grep -- ' webapp_pkgs='
 	)"
 
 	print "Adding webapp packages '${webapp_pkgs:-}'"
 
 	post_pkgs="${post_pkgs:+${post_pkgs} }${webapp_pkgs:-}"
-	post_use="internal-glib python_targets_${python_target}${php_extra_use:+ ${php_extra_use}}"
+	#post_use="internal-glib python_targets_${python_target}${php_extra_use:+ ${php_extra_use}}"
+	post_use="internal-glib python_targets_${python_target}"
 
-	unset webapp_pkgs webapp_use
+	unset webapp_pkgs # webapp_use php_extra_use
 fi
 
 if [ -z "${container_cmd:-}" ]; then
@@ -97,50 +110,66 @@ fi
 
 [ -n "${trace:-}" ] && set -o xtrace
 
-if [ -e "${PWD}/etc/portage/package.accept_keywords" ]; then
+# package.accept_keywords
+if [ -e "etc/portage/package.accept_keywords" ]; then
 	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+${DOCKER_EXTRA_MOUNTS} }--mount type=bind,source=${PWD}/etc/portage/package.accept_keywords,destination=/etc/portage/package.accept_keywords/package.accept_keywords${docker_readonly:+,${docker_readonly}}"
 else
-	warn "No 'package.accept_keywords' override found in '${PWD}/etc/portage/'"
+	note "No 'package.accept_keywords' override found in '${PWD}/etc/portage/'"
 fi
-if [ -e "${PWD}/etc/portage/package.license" ]; then
+
+# package.license
+if [ -e "etc/portage/package.license" ]; then
 	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+${DOCKER_EXTRA_MOUNTS} }--mount type=bind,source=${PWD}/etc/portage/package.license,destination=/etc/portage/package.license${docker_readonly:+,${docker_readonly}}"
 else
-	warn "No 'package.license' override found in '${PWD}/etc/portage/'"
+	note "No 'package.license' override found in '${PWD}/etc/portage/'"
 fi
-if [ -e "${PWD}/etc/portage/package.use/package.use" ]; then
+
+# package.use
+if [ -e "etc/portage/package.use/package.use" ]; then
 	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+${DOCKER_EXTRA_MOUNTS} }--mount type=bind,source=${PWD}/etc/portage/package.use/package.use,destination=/etc/portage/package.use/package.use${docker_readonly:+,${docker_readonly}}"
 else
 	warn "No 'package.use/package.use' override found in '${PWD}/etc/portage/'"
 fi
-if [ -e "${PWD}/etc/portage/package.use/python_targets" ]; then
+
+if [ -e "etc/portage/package.use/python_targets" ]; then
 	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+${DOCKER_EXTRA_MOUNTS} }--mount type=bind,source=${PWD}/etc/portage/package.use/python_targets,destination=/etc/portage/package.use/python_targets${docker_readonly:+,${docker_readonly}}"
 else
-	warn "No 'package.use/python_targets' override found in '${PWD}/etc/portage/'"
+	note "No 'package.use/python_targets' override found in '${PWD}/etc/portage/'"
 fi
-if [ -e "${PWD}/etc/portage/package.use/webapp.use" ]; then
+
+if [ -e "etc/portage/package.use/webapp.use" ]; then
 	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+${DOCKER_EXTRA_MOUNTS} }--mount type=bind,source=${PWD}/etc/portage/package.use/webapp.use,destination=/etc/portage/package.use/webapp.use${docker_readonly:+,${docker_readonly}}"
 else
 	warn "No 'package.use/webapp.use' override found in '${PWD}/etc/portage/'"
 fi
-if [ -e "${PWD}/etc/portage/package.mask" ]; then
-	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+${DOCKER_EXTRA_MOUNTS} }--mount type=bind,source=${PWD}/etc/portage/package.mask,destination=/etc/portage/package.mask${docker_readonly:+,${docker_readonly}}"
+
+# package.mask
+if [ -e "etc/portage/package.mask" ]; then
+	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+${DOCKER_EXTRA_MOUNTS} }--mount type=bind,source=${PWD}/etc/portage/package.mask,destination=/etc/portage/package.mask/package.mask${docker_readonly:+,${docker_readonly}}"
 else
 	warn "No 'package.mask' override found in '${PWD}/etc/portage/'"
 fi
-for webappdir in $( find /var/www/localhost/htdocs/ -mindepth 2 -maxdepth 2 -type d -print ); do
+
+#for webappdir in $( find /var/www/localhost/htdocs/ -mindepth 2 -maxdepth 2 -type d -print ); do
+#	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+${DOCKER_EXTRA_MOUNTS} }--mount type=bind,source=${webappdir}/,destination=${webappdir}/"
+#done
+while IFS= read -r -d '' webappdir; do
 	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+${DOCKER_EXTRA_MOUNTS} }--mount type=bind,source=${webappdir}/,destination=${webappdir}/"
-done
+done < <( find /var/www/localhost/htdocs/ -mindepth 2 -maxdepth 2 -type d -print0 )
 unset webappdir
 export DOCKER_EXTRA_MOUNTS
 
 images="$( $docker image ls "buildweb-${package_name}:${package_version}" 2>&1 )"
-if echo "${images:-}" | grep -q -- "buildweb-${package_name}\s\+${package_version}\s"; then
-	echo >&2
+if
+	echo "${images:-}" | grep -q -- "buildweb-${package_name}\s\+${package_version}\s" &&
+	! echo " ${*:-} " | grep -Eq -- ' -(f|-force) '
+then
+	output >&2
 	note " ${blue}*${reset} Re-using existing '${package_name}:${package_version}' root image ..."
 else
-	echo >&2
+	output >&2
 	info >&2 " ${blue}*${reset} Building '${package_name}:${package_version}' root image ..."
-	echo >&2
+	output >&2
 
 	trap '' INT
 	$docker stop "buildweb-${container_name}" 2>/dev/null || :
@@ -155,8 +184,7 @@ else
 		# be true (of podman, at least) - but we should try to adhere
 		# to the documented standards ...
 		#if [ ! -e "${PWD}/etc/portage/package.mask" ] || [ ! -e "${PWD}/etc/portage/package.use" ] ; then
-		#	echo >&2 "FATAL: Can't resolve volume source '${PWD}/etc/portage/package.{mask,use}'"
-		#	exit 1
+		#	die "Can't resolve volume source '${PWD}/etc/portage/package.{mask,use}'"
 		#fi
 		#export DOCKER_VOLUMES="--volume ${PWD}/etc/portage/package.mask:/etc/portage/package.mask:ro --volume ${PWD}/etc/portage/package.use:/etc/portage/package.use:ro"
 
@@ -180,7 +208,7 @@ else
 			tee ../log/"docker.buildweb-${container_name}.log"
 	)
 	rc=${?}
-	echo " -> ${rc}"
+	output " -> ${rc}"
 
 	[ "${rc}" = '0' ] || exit 1
 
@@ -192,7 +220,7 @@ else
 		2>&1 | tee -a ../log/"docker.buildweb-${container_name}.log"
 	rc=${?}
 	trap - INT
-	echo " -> ${rc}"
+	output " -> ${rc}"
 
 	[ "${rc}" = '0' ] || exit 1
 fi
@@ -202,9 +230,9 @@ trap '' INT
 $docker rm --volumes "buildweb-${container_name}" 2>/dev/null || :
 trap - INT
 
-echo >&2
+output >&2
 info >&2 " ${blue}*${reset} Building ${package_name}:${package_version} (${container_cmd}) service image ..."
-echo >&2
+output >&2
 
 # shellcheck disable=SC2001 # POSIX sh compatibility
 $docker build \
@@ -225,7 +253,7 @@ $docker build \
 	tee ../log/"docker.web.${container_name}.log"
 			#--network slirp4netns \
 rc=${?}
-echo " -> ${rc}"
+output " -> ${rc}"
 
 #if [ $(( ${rc:-1} )) -eq 0 ]; then
 #	trap '' INT
@@ -235,4 +263,4 @@ echo " -> ${rc}"
 
 set +o xtrace
 
-exit ${rc} 
+exit ${rc}
