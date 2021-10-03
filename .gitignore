@@ -3,4 +3,7 @@
 # Any additional content must be added privately...
 content
 
+# Renew relative links
+/relink.sh
+
 # vi: set syntax=cfg:
