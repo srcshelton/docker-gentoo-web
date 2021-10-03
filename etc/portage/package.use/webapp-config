@@ -6,7 +6,6 @@
 
 
 */*					-* asm ipv6 ithreads mdev nptl threads tls-heartbeat zlib # from 'use_essential'
-*/*					 PHP_TARGETS: php7-4
 
 app-admin/webapp-config			 lighttpd
 sys-apps/busybox			 make-symlinks mdev static

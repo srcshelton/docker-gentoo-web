@@ -1,3 +1,5 @@
 
-# This file intentionally left blank
+*/*					PYTHON_TARGETS: -* python3_9
+*/*					PYTHON_SINGLE_TARGET: -* python3_9
 
+# vi: set nowrap syntax=gentoo-package-use sw=8 ts=8:
