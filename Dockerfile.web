@@ -134,10 +134,12 @@ RUN test -d /var/www/localhost && \
     test -e /var/db/webapps/.keep_app-admin_webapp-config-0
 
 COPY content/sites /var/www/
-#COPY cgi-bin /var/www/localhost/cgi-bin/
+COPY content/cgi-bin /var/www/localhost/cgi-bin/
 COPY content/htdocs /var/www/localhost/htdocs/
 COPY --chown=nobody:lighttpd content/config /srv/config/
-RUN test -e "/var/www/${marker}" && \
+RUN find /var/www/ -type f -name .gitkeep -delete || : ; \
+    find /srv/config/ -type f -name .gitkeep -delete || : ; \
+    test -e "/var/www/${marker}" && \
     test -e "/var/www/localhost/htdocs/${marker}"
     #test -e "/var/www/localhost/cgi-bin/${marker}" && \
 
@@ -156,8 +158,10 @@ RUN echo "${service_cmd}" ; \
 # container ...
 #
 COPY content/passwd content/group /tmp/
-RUN cat /tmp/passwd >> /etc/passwd && \
-    cat /tmp/group >> /etc/group && \
+RUN { \
+        test ! -s /tmp/passwd || cat /tmp/passwd >> /etc/passwd ; \
+        test ! -s /tmp/group || cat /tmp/group >> /etc/group ; \
+    } ; \
     cut -d':' -f 3,4,6 /etc/passwd | while IFS=':' read -r u g d; do \
         [ "${d}" = '/dev/null' ] && continue ; \
         mkdir -p "${d}" ; \
@@ -262,6 +266,7 @@ RUN { set -o pipefail 2>/dev/null || true ; } ; \
             rmdir "${base}" || ls -lAR "${base}" ; \
         done ; \
         cd / ; \
+        rm -f /srv/config/.keep* 2>/dev/null || : ; \
         rmdir /srv/config || ls -lAR /srv/config/ ; \
     ) ; \
     mkdir -p /srv/web-content/usr/share && \

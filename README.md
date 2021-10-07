@@ -23,7 +23,10 @@ these steps:
     directories under `/var/www/localhost/htdocs` if the webapp is installed.
     e.g. `config/phpsysinfo/phpsysinfo.ini` would be created within the
          container as `/var/www/localhost/htdocs/phpsysinfo/phpsysinfo.ini` if
-	 the webapp `phpsysinfo` is installed.
+	 the webapp `phpsysinfo` is installed;
+  * A directory named `cgi-bin`, which may be left empty if not further used;
+  * A file named `webapps.conf` defining a shell-variable named `webapp_pkgs`
+    which specifies the web-apps to install - see webapps.conf.example.
 
 Building the container creates the content, running the container with
 `/bin/true` as the entrypoint then creates volumes which can be mounted to
@@ -31,3 +34,5 @@ containers running a webserver and/or PHP in order to serve the embedded
 content (noting that even FPM PHP via UNIX domain or network socket still
 requires the same content as seen by the webserver process to be available on
 the same path).
+
+<!-- vi: set colorcolumn=80: -->

@@ -94,21 +94,29 @@ print "Building for PHP version(s) '${php_targets}'"
 
 # aolserver apache cherokee gatling lighttpd nginx +portage tracd uwsgi
 info "Setting build variables for package 'webapp-config' ..."
-pre_use="-lib-only internal-glib python_targets_${python_target}"
+pre_use="-lib-only internal-glib python_targets_${python_target} python_single_target_${python_target}"
 pre_pkgs='sys-apps/help2man sys-devel/gcc sys-apps/busybox sys-apps/sed app-admin/eselect app-eselect/eselect-awk dev-lang/php sys-apps/gawk www-servers/lighttpd virtual/httpd-cgi virtual/httpd-fastcgi virtual/httpd-php'
 extra_pkgs='sys-apps/sed'
-with_use="python_targets_${python_target}"
+with_use="python_targets_${python_target} python_single_target_${python_target}"
 container_cmd='/bin/true'
 
-if [ -s webapps.conf ]; then
+if ! [ -s content/webapps.conf ]; then
+	warn "file 'content/webapps.conf' not found - only static content will be served"
+	sleep 5
+else
 	eval "$(
 		# shellcheck disable=SC1091
-		. ./webapps.conf # >/dev/null 2>&1
+		. ./content/webapps.conf # >/dev/null 2>&1
 		#export -p | grep -E -- ' (webapp_(pkgs|use)|php_extra_use)='
 		export -p | grep -- ' webapp_pkgs='
 	)"
 
-	print "Adding webapp packages '${webapp_pkgs:-}'"
+	if [ -z "${webapp_pkgs:-}" ]; then
+		warn "file 'content/webapps.conf' defines no webapps - only static content will be served"
+		sleep 5
+	else
+		print "Adding webapp packages '${webapp_pkgs:-}'"
+	fi
 
 	post_pkgs="${post_pkgs:+${post_pkgs} }${webapp_pkgs:-}"
 	#post_use="internal-glib python_targets_${python_target}${php_extra_use:+ ${php_extra_use}}"
