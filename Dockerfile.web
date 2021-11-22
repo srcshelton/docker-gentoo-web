@@ -101,16 +101,18 @@ ARG DEBUG
 # Copy the installed tree into the current image
 #
 #COPY --from=base "${ROOT}" /
-COPY --from=base /bin/sh /bin/
+COPY --from=base /bin/busybox /bin/
 COPY --from=base /usr/share/doc /usr/share/doc/
 #COPY --from=base /usr/share/info /usr/share/info/
 COPY --from=base /usr/share/man /usr/share/man/
 #COPY --from=base /var/db/pkg /var/db/
 
-RUN mkdir -p /sbin && \
-    ln -s sh /bin/true && \
-    ln -s ../bin/sh /sbin/nologin && \
-    test -d /usr/share/doc && \
+SHELL ["/bin/busybox", "sh", "-c"]
+RUN busybox mkdir -p /sbin
+RUN busybox --install -s
+
+SHELL ["/bin/sh", "-c"]
+RUN test -d /usr/share/doc && \
     test -d /usr/share/man
 #    test -d /usr/share/info && \
 
@@ -137,8 +139,8 @@ COPY content/sites /var/www/
 COPY content/cgi-bin /var/www/localhost/cgi-bin/
 COPY content/htdocs /var/www/localhost/htdocs/
 COPY --chown=nobody:lighttpd content/config /srv/config/
-RUN find /var/www/ -type f -name .gitkeep -delete || : ; \
-    find /srv/config/ -type f -name .gitkeep -delete || : ; \
+RUN find /var/www/ -type f -name .gitkeep -delete ; \
+    find /srv/config/ -type f -name .gitkeep -delete ; \
     test -e "/var/www/${marker}" && \
     test -e "/var/www/localhost/htdocs/${marker}"
     #test -e "/var/www/localhost/cgi-bin/${marker}" && \
