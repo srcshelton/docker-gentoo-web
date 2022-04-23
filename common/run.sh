@@ -459,7 +459,7 @@ docker_resolve() {
 			grep -- '^\[' |
 			grep -v \
 				-e "^\[...\] \[.[${dr_pattern}]\] " \
-				-e "^\[...\] \[M.]\] " |
+				-e "^\[...\] \[M.\] " |
 			cut -d']' -f 3- |
 			cut -d' ' -f 2- |
 			cut -d':' -f 1 |
@@ -477,7 +477,11 @@ docker_resolve() {
 	fi
 	dr_package="${dr_name}-${dr_package}"
 
-	package="$( echo "${dr_package}" | cut -d':' -f 1 )"
+	package="$(
+		echo "${dr_package}" |
+		cut -d':' -f 1 |
+		sed --regexp-extended 's/^([~<>]|=[<>]?)//'
+	)"
 	package_version="$( versionsort "${package}" )"
 	# shellcheck disable=SC2001 # POSIX sh compatibility
 	package_name="$( echo "${package%-"${package_version}"}" | sed 's/+/plus/g' )"
@@ -738,6 +742,7 @@ docker_run() {
 			mirrormountpoints=(
 				#/var/cache/portage/dist
 				"${default_distdir_path:-$( portageq distdir )}"
+				'/etc/portage/savedconfig'
 				'/var/log/portage'
 			)
 
@@ -806,6 +811,17 @@ docker_run() {
 			fi
 			runargs+=( --mount "type=bind,source=${src},destination=${mountpoints[${mp}]}" )
 		done
+
+		if [ -n "${name:-}" ] && [ -n "${base_name:-}" ] && [ -n "${init_name:-}" ]; then
+			if [ "${name}" = "${base_name#*/}" ] && [ "${image}" = "${init_name}:latest" ]; then
+				# Prevent portage from outputting:
+				#
+				# !!! It seems /run is not mounted. Process management may malfunction.
+				#
+				info "Providing '/run' mount-point during initial base-image build ..."
+				runargs+=( --mount "type=tmpfs,tmpfs-size=64M,destination=/run" )
+			fi
+		fi
 
 		if [ $(( skipped )) -ge 1 ]; then
 			warn "${skipped} mount-points not connected to container"
