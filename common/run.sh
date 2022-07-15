@@ -47,12 +47,12 @@ output() {
 	else
 		echo -e "${*:-}"
 	fi
-} # output
+}  # output
 
 die() {
 	output >&2 "FATAL: ${*:-Unknown error}"
 	exit 1
-} # die
+}  # die
 
 error() {
 	if [ -z "${*:-}" ]; then
@@ -61,7 +61,7 @@ error() {
 		output >&2 "ERROR: ${*}"
 	fi
 	return 1
-} # error
+}  # error
 
 warn() {
 	if [ -z "${*:-}" ]; then
@@ -69,7 +69,7 @@ warn() {
 	else
 		output >&2 "WARN:  ${*}"
 	fi
-} # warn
+}  # warn
 
 note() {
 	if [ -z "${*:-}" ]; then
@@ -77,7 +77,7 @@ note() {
 	else
 		output >&2 "NOTE:  ${*}"
 	fi
-} # note
+}  # note
 
 info() {
 	if [ -z "${*:-}" ]; then
@@ -85,7 +85,7 @@ info() {
 	else
 		output "INFO:  ${*}"
 	fi
-} # info
+}  # info
 
 print() {
 	if [ -n "${DEBUG:-}" ]; then
@@ -99,7 +99,7 @@ print() {
 	#else
 	#	return 1
 	fi
-} # print
+}  # print
 
 export -f output die error warn note info print
 
@@ -108,7 +108,7 @@ export -f output die error warn note info print
 if [[ "$( uname -s )" == 'Darwin' ]]; then
 	readlink() {
 		perl -MCwd=abs_path -le 'print abs_path readlink(shift);' "${2}"
-	}
+	}  # readlink
 fi
 
 # Mostly no longer needed, with Dockerfile.env ...
@@ -174,7 +174,7 @@ docker_setup() {
 	esac
 
 	return 0
-} # docker_setup
+}  # docker_setup
 
 # Sets image, name, package, extra, and args based on arguments
 #
@@ -261,7 +261,7 @@ docker_parse() {
 	unset dp_arg
 
 	return 0
-} # docker_parse
+}  # docker_parse
 
 # Validates package and sets container
 #
@@ -299,7 +299,7 @@ docker_resolve() {
 				echo -n "${result}"
 
 				return "${rc}"
-			}
+			}  # versionsort
 			export -f versionsort
 
 			equery() {
@@ -322,7 +322,7 @@ docker_resolve() {
 				echo "${result}"
 
 				return "${rc}"
-			}
+			}  # equery
 			export -f equery
 		else
 			# Before we have that (and to make building a container for those
@@ -337,7 +337,7 @@ docker_resolve() {
 					xargs -n 1 |
 					sed 's/^.*[a-z]-\([0-9].*\)$/\1/' |
 					sort -V
-			}
+			}  # versionsort
 			export -f versionsort
 			equery() {
 				local -a args=()
@@ -407,8 +407,7 @@ docker_resolve() {
 							"${cat}/${eb%.ebuild}:${slot}"
 					done
 				done
-
-			}
+			}  # equery
 			export -f equery
 		fi
 	fi
@@ -494,7 +493,7 @@ docker_resolve() {
 	unset dr_package
 
 	return 0
-} # docker_resolve
+}  # docker_resolve
 
 docker_image_exists() {
 	image="${1:-${package}}"
@@ -529,7 +528,7 @@ docker_image_exists() {
 		awk '{ print $3 }'
 
 	return 0
-} # docker_image_exists
+}  # docker_image_exists
 
 # Launches container
 #
@@ -590,6 +589,9 @@ docker_run() {
 	# PTRACE capability is required to build glibc (but as-of podman-2.0.0
 	# it is not permissible to specify capabilities with '--privileged')
 	#
+	# Update: As-of podman-4.1.0, it is now possible to use '--privileged' and
+	# add a capability in the same invocation!
+	#
 	# FIXME: Add -tty regardless of DOCKER_INTERACTIVE, so that the
 	# container can access details of the host terminal size
 	# *HOWEVER* this removes the ability to use ctrl+c to interrupt, so
@@ -600,6 +602,7 @@ docker_run() {
 	#
 	# We're now running under bash, so can use arrays to make this so much
 	# nicer!
+	#
 	local -a runargs=()
 	# shellcheck disable=SC2207
 	runargs=(
@@ -634,6 +637,42 @@ docker_run() {
 		FEATURES="${FEATURES:+${FEATURES} }-ipc-sandbox -mount-sandbox -network-sandbox"
 		export FEATURES
 	fi
+	if [[ -n "${DEV_MODE:-}" ]]; then
+		if
+			[[
+				-z "${JOBS:-}" ||
+				-z "${MAXLOAD:-}" ||
+				-z "${init_name:-}" ||
+				-z "${base_name:-}" ||
+				-z "${build_name:-}"
+			]]
+		then
+			# shellcheck disable=SC1091
+			[[ ! -s common/vars.sh ]] || . common/vars.sh
+		fi
+
+		local name='' ext=''
+		name="${image#*/}"
+		case "${image#*/}" in
+			"${init_name#*/}:latest"|"${base_name#*/}:latest")
+				: ;;
+			"${build_name#*/}:latest")
+				ext='.build' ;;
+			*)
+				die "I don't know how to apply DEV_MODE to image '${image}'"
+				;;
+		esac
+		unset name
+		runargs+=(
+			  # FIXME: DEV_MODE currently hard-codes entrypoint.sh.build ...
+			  --env DEV_MODE
+			  --env DEFAULT_JOBS="${JOBS}"
+			  --env DEFAULT_MAXLOAD="${MAXLOAD}"
+			  --env environment_file="${environment_file}"
+			  --volume "${PWD%/}/gentoo-base/entrypoint.sh${ext}:/usr/libexec/entrypoint.sh:ro"
+		)
+		unset ext
+	fi
 	# shellcheck disable=SC2206
 	runargs+=(
 		  ${DOCKER_DEVICES:-}
@@ -648,8 +687,6 @@ docker_run() {
 		  #${DOCKER_INTERACTIVE:+--env COLUMNS="$( tput cols 2>/dev/null )" --env LINES="$( tput lines 2>/dev/null )"}
 		--env COLUMNS="$( tput cols 2>/dev/null || echo '80' )" --env LINES="$( tput lines 2>/dev/null || echo '24' )"
 		  ${DEBUG:+--env DEBUG}
-		  # FIXME: DEV_MODE currently hard-codes entrypoint.sh.build ...
-		  ${DEV_MODE:+--env DEV_MODE --volume "${PWD%/}/gentoo-base/entrypoint.sh.build:/usr/libexec/entrypoint.sh:ro"}
 		  ${ECLASS_OVERRIDE:+--env "ECLASS_OVERRIDE=${ECLASS_OVERRIDE}"}
 		  ${EMERGE_OPTS:+--env "EMERGE_OPTS=${EMERGE_OPTS}"}
 		  ${FEATURES:+--env FEATURES}
@@ -917,7 +954,7 @@ docker_run() {
 
 	# shellcheck disable=SC2086
 	return ${rc}
-} # docker_run
+}  # docker_run
 
 # Invokes container launch with package-build arguments
 #
@@ -931,7 +968,7 @@ docker_build_pkg() {
 	docker_run "=${package}${repo:+::${repo}}" ${extra[@]+"${extra[@]}"} ${args[@]+"${args[@]}"}
 
 	return ${?}
-} # docker_build_pkg
+}  # docker_build_pkg
 
 # Garbage collect
 #
@@ -966,7 +1003,7 @@ docker_prune() {
 	trap - INT
 
 	return 0
-} # docker_prune
+}  # docker_prune
 
 # Default entrypoint
 #
@@ -982,7 +1019,7 @@ docker_build() {
 	#docker_prune
 
 	return ${?}
-} # docker_build
+}  # docker_build
 
 if ! echo " ${*:-} " | grep -Eq -- ' -(h|-help) '; then
 	if [ -n "${IMAGE:-}" ]; then
@@ -990,6 +1027,10 @@ if ! echo " ${*:-} " | grep -Eq -- ' -(h|-help) '; then
 	else
 		warn "No default '\${IMAGE}' specified"
 	fi
+fi
+
+if [ ! -d "${PWD%/}/gentoo-base" ] && [ ! -x "${PWD%/}/gentoo-build-web.docker" ]; then
+	die "Cannot locate required directory 'gentoo-base' in '${PWD%/}'"
 fi
 
 # Are we using docker or podman?
@@ -1007,4 +1048,4 @@ else
 fi
 export docker docker_readonly  # extra_build_args
 
-# vi: set syntax=bash nowrap:
+# vi: set colorcolumn=80 foldmarker=()\ {,}\ \ #\  foldmethod=marker syntax=bash nowrap:
