@@ -23,19 +23,19 @@
 # Medium
 #: "${PODMAN_MEMORY_RESERVATION:=1g}"
 #: "${PODMAN_MEMORY_LIMIT:=2g}"
-#: "${PODMAN_SWAP_LIMIT:=4g}"
+#: "${PODMAN_SWAP_LIMIT:=3g}"
 # Large
 #: "${PODMAN_MEMORY_RESERVATION:=2g}"
 #: "${PODMAN_MEMORY_LIMIT:=4g}"
-#: "${PODMAN_SWAP_LIMIT:=8g}"
+#: "${PODMAN_SWAP_LIMIT:=6g}"
 # Extra-Large
 #: "${PODMAN_MEMORY_RESERVATION:=4g}"
 #: "${PODMAN_MEMORY_LIMIT:=8g}"
-#: "${PODMAN_SWAP_LIMIT:=16g}"
+#: "${PODMAN_SWAP_LIMIT:=11g}"
 # XXL
 : "${PODMAN_MEMORY_RESERVATION:=8g}"
 : "${PODMAN_MEMORY_LIMIT:=16g}"
-: "${PODMAN_SWAP_LIMIT:=24g}"
+: "${PODMAN_SWAP_LIMIT:=20g}"
 
 # shellcheck disable=SC2034
 debug=${DEBUG:-}
@@ -226,7 +226,7 @@ docker_parse() {
 				extra+=( "${dp_arg}" )
 				print "Adding extra argument '${dp_arg}'"
 
-			elif echo "${dp_arg}" | grep -Eq -- '((virtual|[a-z]{3,7}-[a-z]+)/)?[a-z0-9Z][a-zA-Z0-9_.+-]+(:[0-9.]+)?(::.*)?$'; then
+			elif echo "${dp_arg}" | grep -Eq -- '((virtual|[a-z]{3,7}-[a-z]+)/)?[a-z0-9Z][a-zA-Z0-9_.+-]+\*?(:[0-9.]+\*?)?(::.*)?$'; then
 				# Currently category general names are between 3 and 7 ("gnustep") letters,
 				# Package names start with [023469Z] or lower-case ...
 				if [ -z "${package:-}" ]; then
@@ -720,11 +720,25 @@ docker_run() {
 			if (( ram < ${PODMAN_MEMORY_LIMIT%g} )); then
 				PODMAN_MEMORY_RESERVATION="$(( ram - 1 ))g"
 				PODMAN_MEMORY_LIMIT="$(( ram ))g"
-				PODMAN_SWAP_LIMIT="$(( ram + swp ))g"
+				#PODMAN_SWAP_LIMIT="$(( ram + swp ))g"
+				if (( ram <= 1 )); then
+					PODMAN_SWAP_LIMIT="$(( ram * 2 ))g"
+				else
+					PODMAN_SWAP_LIMIT="$(( ram + $(
+						awk -v ram="${ram}" 'BEGIN{ print int( sqrt( ram ) + 0.5 ) }'
+					) ))g"
+				fi
 				changed=1
 			fi
 			if (( ( ram + swp ) < ${PODMAN_SWAP_LIMIT%g} )); then
-				PODMAN_SWAP_LIMIT="$(( ram + swp ))g"
+				#PODMAN_SWAP_LIMIT="$(( ram + swp ))g"
+				if (( ram <= 1 )); then
+					PODMAN_SWAP_LIMIT="$(( ram * 2 ))g"
+				else
+					PODMAN_SWAP_LIMIT="$(( ram + $(
+						awk -v ram="${ram}" 'BEGIN{ print int( sqrt( ram ) + 0.5 ) }'
+					) ))g"
+				fi
 				changed=1
 			fi
 			if (( changed )); then
