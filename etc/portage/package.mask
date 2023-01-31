@@ -9,4 +9,7 @@ www-servers/apache
 <virtual/mysql-5.6
 dev-db/mysql
 
+# We're not yet ready for PHP8+
+>=dev-lang/php-8
+
 # vi: set colorcolumn=80 syntax=gentoo-package-mask:
