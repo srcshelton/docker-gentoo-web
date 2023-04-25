@@ -1,5 +1,5 @@
 #! /bin/sh
-#shellcheck disable=SC2034
+# shellcheck disable=SC2034
 
 # Since we're now using 'podman system info' to determine the graphRoot
 # directory, we need to be root simply to setup the environment
@@ -45,6 +45,7 @@ if ! [ -d "${base_dir}" ]; then
 	base_dir=''
 fi
 
+use_cpu_arch='' use_cpu_flags='' gcc_target_opts='-march=native'
 use_cpu_arch="$( uname -m | cut -c 1-3 | sed 's/aar/arm/' )"
 if command -v cpuid2cpuflags >/dev/null 2>&1; then
 	use_cpu_flags="$( cpuid2cpuflags | cut -d':' -f 2- )"
@@ -66,40 +67,59 @@ else
 	case "${description:-}" in
 		*': Intel(R) Atom(TM) CPU '*' 330 '*' @ '*)
 			use_cpu_arch='x86'
-			use_cpu_flags="mmx mmxext sse sse2 sse3 ssse3" ;;
+			use_cpu_flags='mmx mmxext sse sse2 sse3 ssse3'
+			gcc_target_opts='-march=bonnell' ;;
 		*': Intel(R) Core(TM) i3-21'*' CPU @ '*)
 			use_cpu_arch='x86'
-			use_cpu_flags="avx mmx mmxext pclmul popcnt sse sse2 sse3 sse4_1 sse4_2 ssse3" ;;
+			use_cpu_flags='avx mmx mmxext pclmul popcnt sse sse2 sse3 sse4_1 sse4_2 ssse3'
+			gcc_target_opts='-march=sandybridge' ;;
 		*': Intel(R) Core(TM) i5-24'*' CPU @ '*)
 			use_cpu_arch='x86'
-			use_cpu_flags="aes avx mmx mmxext pclmul popcnt sse sse2 sse3 sse4_1 sse4_2 ssse3" ;;
+			use_cpu_flags='aes avx mmx mmxext pclmul popcnt sse sse2 sse3 sse4_1 sse4_2 ssse3'
+			gcc_target_opts='-march=sandybridge -maes' ;;
 		*': Intel(R) Xeon(R) CPU E5-'*' v2 @ '*)
 			use_cpu_arch='x86'
-			use_cpu_flags="aes avx f16c mmx mmxext pclmul popcnt rdrand sse sse2 sse4_1 sse4_2 ssse3" ;;
+			use_cpu_flags='aes avx f16c mmx mmxext pclmul popcnt rdrand sse sse2 sse4_1 sse4_2 ssse3'
+			gcc_target_opts='-march=ivybridge -maes' ;;
 		*': Intel(R) Xeon(R) CPU E3-'*' v5 @ '*)
 			use_cpu_arch='x86'
-			use_cpu_flags="aes avx avx2 f16c fma3 mmx mmxext pclmul popcnt rdrand sse sse2 sse3 sse4_1 sse4_2 ssse3" ;;
+			use_cpu_flags='aes avx avx2 f16c fma3 mmx mmxext pclmul popcnt rdrand sse sse2 sse3 sse4_1 sse4_2 ssse3'
+			gcc_target_opts='-march=skylake -mabm' ;;
 
 		*': AMD G-T40E '*)
 			use_cpu_arch='x86'
-			use_cpu_flags="mmx mmxext popcnt sse sse2 sse3 sse4a ssse3" ;;
+			use_cpu_flags='mmx mmxext popcnt sse sse2 sse3 sse4a ssse3'
+			gcc_target_opts='-march=btver1' ;;
 		*': AMD GX-412TC '*)
 			use_cpu_arch='x86'
-			use_cpu_flags="aes avx f16c mmx mmxext pclmul popcnt sse sse2 sse3 sse4_1 sse4_2 sse4a ssse3" ;;
+			use_cpu_flags='aes avx f16c mmx mmxext pclmul popcnt sse sse2 sse3 sse4_1 sse4_2 sse4a ssse3'
+			gcc_target_opts='-march=btver2' ;;
 
+		*': Raspberry Pi Zero W Rev 1.1'*)
+			use_cpu_arch='arm'
+			use_cpu_flags='edsp neon thumb vfp vfpv3 vfpv4 vfp-d32 crc32 v4 v5 v6 v7 thumb2'
+			gcc_target_opts='-march=armv6kz+fp -mcpu=arm1176jzf-s' ;;
 		*': Raspberry Pi 2 '*)
 			use_cpu_arch='arm'
-			use_cpu_flags="edsp neon thumb vfp vfpv3 vfpv4 vfp-d32 v4 v5 v6 v7 thumb2" ;;
+			use_cpu_flags='edsp neon thumb vfp vfpv3 vfpv4 vfp-d32 v4 v5 v6 v7 thumb2'
+			gcc_target_opts='-march=armv7ve+vfpv3-d16 -mcpu=cortex-a7 -mlibarch=armv7ve+vfpv3-d16' ;;
 		*': Raspberry Pi 3 '*)
 			use_cpu_arch='arm'
-			use_cpu_flags="edsp neon thumb vfp vfpv3 vfpv4 vfp-d32 crc32 v4 v5 v6 v7 thumb2" ;;
+			use_cpu_flags='edsp neon thumb vfp vfpv3 vfpv4 vfp-d32 crc32 v4 v5 v6 v7 thumb2'
+			gcc_target_opts='-march=armv8-a+crc+simd -mcpu=cortex-a53' ;;
 		*': Raspberry Pi 4 '*)
 			use_cpu_arch='arm'
-			use_cpu_flags="edsp neon thumb vfp vfpv3 vfpv4 vfp-d32 crc32 v4 v5 v6 v7 thumb2" ;;
+			use_cpu_flags='edsp neon thumb vfp vfpv3 vfpv4 vfp-d32 crc32 v4 v5 v6 v7 thumb2'
+			# Raspberry Pi 400 Rev 1.0/Debian 10.2.1-6 reports 'armv8-a+crc'
+			# Raspberry Pi 4 Model B Rev 1.1/Debian 10.2.1-6+rpi1 reports 'armv8-a+crc+simd'
+			#gcc_target_opts='-march=armv8-a+crc'
+			gcc_target_opts='-march=armv8-a+crc+simd -mcpu=cortex-a72 -mtp=cp15' ;;
 
 		*': 0xd07'|'Apple M1'*)
 			use_cpu_arch='arm'
-			use_cpu_flags="aes crc32 sha1 sha2" ;;
+			use_cpu_flags='aes crc32 sha1 sha2'
+			#gcc_target_opts='-march=armv8-a'
+			;;
 		*)
 			description="$( echo "${description}" | cut -d':' -f 2- | sed 's/^\s*// ; s/\s*$//' )"
 			vendor="$( grep -- '^vendor_id' /proc/cpuinfo | tail -n 1 | awk -F': ' '{ print $2 }' )"
@@ -177,7 +197,7 @@ fi
 #  sys-devel/gcc:		nptl
 # (General:				ipv6 ~openssl~ ~ssl~ threads)
 #
-use_essential="asm ipv6 ithreads mdev nptl split-usr ssp threads tls-heartbeat zlib${use_cpu_flags:+ ${use_cpu_flags}}"
+use_essential="asm ipv6 ithreads native-extensions mdev nptl split-usr ssp threads tls-heartbeat zlib${use_cpu_flags:+ ${use_cpu_flags}}"
 
 # Even though we often want a minimal set of flags, gcc's flags are significant
 # since they may affect the compiler facilities available to all packages built
@@ -191,16 +211,25 @@ use_essential_gcc="default-stack-clash-protection default-znow -fortran graphite
 
 case "$( uname -m )" in
 	x86_64|i686)
-		# Enable pypy support for Portage accleration of ~35%!
-		use_pypy="dev-python/pypy3"
-		use_pypy_use="bzip2 jit"
-		if [ $(( $( grep -m 1 'MemTotal:' /proc/meminfo | awk '{ print $2 }' ) / 1024 / 1024 )) -gt 6 ]; then
-			use_pypy="${use_pypy} dev-python/pypy3-exe"
-		else
-			use_pypy="${use_pypy} dev-python/pypy3-exe-bin"
-			use_pypy_use="${use_pypy_use} low-memory"
+		: $(( memtotal = $( grep -m 1 'MemTotal:' /proc/meminfo | awk '{ print $2 }' ) / 1024 / 1024 ))
+		# memtotal is rounded-down, so 4GB systems have a memtotal of 3...
+		if [ $(( memtotal )) -ge 4 ]; then
+			# Enable pypy support for Portage accleration of ~35%!
+			use_pypy="dev-python/pypy3"
+			use_pypy_use="bzip2 jit"
+			use_pypy_post_remove="dev-lang/python:2.7"
+			if [ $(( memtotal )) -gt 6 ]; then
+				use_pypy="${use_pypy} dev-python/pypy3-exe"
+			else
+				# On a system with 4GB of memory and python3.11, the install
+				# process for dev-python/pypy3-7.3.11_p1 now hangs indefinitely
+				# after issuing a message reading:
+				#concurrent.futures.process.BrokenProcessPool: A process in the process pool was terminated abruptly while the future was running or pending.
+				use_pypy="${use_pypy} dev-python/pypy3-exe-bin"
+				use_pypy_use="${use_pypy_use} low-memory"
+			fi
 		fi
-		use_pypy_post_remove="dev-lang/python:2.7"
+		unset memtotal
 		;;
 esac
 
@@ -261,7 +290,7 @@ tmp="$( $docker system info | grep 'graphRoot:' | cut -d':' -f 2- | awk '{ print
 mkdir -p "${tmp:=/var/lib/containers/storage/tmp}"
 export TMPDIR="${tmp}"
 
-python_default_target='python3_10'
+python_default_target='python3_11'
 
 if [ -f common/local.sh ]; then
 	# shellcheck disable=SC1091

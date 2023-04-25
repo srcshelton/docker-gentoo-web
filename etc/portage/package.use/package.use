@@ -1,3 +1,7 @@
 
-# This file intentionally left blank
+*/*					-* asm ipv6 ithreads native-extensions mdev nptl split-usr ssp threads tls-heartbeat zlib # ${use_cpu_flags}  # from 'use-essential'
 
+app-crypt/libb2				 openmp
+sys-devel/gcc				 openmp
+
+# vi: set nowrap syntax=gentoo-package-use:

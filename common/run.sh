@@ -13,29 +13,30 @@
 # array-handling capability...
 
 # Tiny
-#: "${PODMAN_MEMORY_RESERVATION:=256m}"
-#: "${PODMAN_MEMORY_LIMIT:=512m}"
-#: "${PODMAN_SWAP_LIMIT:=1g}"
+#: "${PODMAN_MEMORY_RESERVATION:="256m"}"
+#: "${PODMAN_MEMORY_LIMIT:="512m"}"
+#: "${PODMAN_SWAP_LIMIT:="1g"}"
 # Small
-#: "${PODMAN_MEMORY_RESERVATION:=512m}"
-#: "${PODMAN_MEMORY_LIMIT:=1g}"
-#: "${PODMAN_SWAP_LIMIT:=2g}"
+#: "${PODMAN_MEMORY_RESERVATION:="512m"}"
+#: "${PODMAN_MEMORY_LIMIT:="1g"}"
+#: "${PODMAN_SWAP_LIMIT:="2g"}"
 # Medium
-#: "${PODMAN_MEMORY_RESERVATION:=1g}"
-#: "${PODMAN_MEMORY_LIMIT:=2g}"
-#: "${PODMAN_SWAP_LIMIT:=3g}"
+#: "${PODMAN_MEMORY_RESERVATION:="1g"}"
+#: "${PODMAN_MEMORY_LIMIT:="2g"}"
+#: "${PODMAN_SWAP_LIMIT:="3g"}"
 # Large
-#: "${PODMAN_MEMORY_RESERVATION:=2g}"
-#: "${PODMAN_MEMORY_LIMIT:=4g}"
-#: "${PODMAN_SWAP_LIMIT:=6g}"
+#: "${PODMAN_MEMORY_RESERVATION:="2g"}"
+#: "${PODMAN_MEMORY_LIMIT:="4g"}"
+#: "${PODMAN_SWAP_LIMIT:="6g"}"
 # Extra-Large
-#: "${PODMAN_MEMORY_RESERVATION:=4g}"
-#: "${PODMAN_MEMORY_LIMIT:=8g}"
-#: "${PODMAN_SWAP_LIMIT:=11g}"
+: "${PODMAN_MEMORY_RESERVATION:="4g"}"
+: "${PODMAN_MEMORY_LIMIT:="8g"}"
+#: "${PODMAN_SWAP_LIMIT:="11g"}"
 # XXL
-: "${PODMAN_MEMORY_RESERVATION:=8g}"
-: "${PODMAN_MEMORY_LIMIT:=16g}"
-: "${PODMAN_SWAP_LIMIT:=20g}"
+#: "${PODMAN_MEMORY_RESERVATION:="8g"}"
+#: "${PODMAN_MEMORY_LIMIT:="16g"}"
+#: "${PODMAN_SWAP_LIMIT:="20g"}"
+: "${PODMAN_SWAP_LIMIT:="${PODMAN_MEMORY_LIMIT}"}"
 
 # shellcheck disable=SC2034
 debug=${DEBUG:-}
@@ -50,6 +51,7 @@ output() {
 }  # output
 
 die() {
+	#output >&2 "FATAL: ${BASH_SOURCE[0]:-"$( basename "${0}" )"}: ${*:-Unknown error}"
 	output >&2 "FATAL: ${*:-Unknown error}"
 	exit 1
 }  # die
@@ -58,6 +60,7 @@ error() {
 	if [ -z "${*:-}" ]; then
 		output >&2
 	else
+		#output >&2 "ERROR: ${BASH_SOURCE[0]:-"$( basename "${0}" )"}: ${*}"
 		output >&2 "ERROR: ${*}"
 	fi
 	return 1
@@ -67,6 +70,7 @@ warn() {
 	if [ -z "${*:-}" ]; then
 		output >&2
 	else
+		#output >&2 "WARN:  ${BASH_SOURCE[0]:-"$( basename "${0}" )"}: ${*}"
 		output >&2 "WARN:  ${*}"
 	fi
 }  # warn
@@ -75,6 +79,7 @@ note() {
 	if [ -z "${*:-}" ]; then
 		output >&2
 	else
+		#output >&2 "NOTE:  ${BASH_SOURCE[0]:-"$( basename "${0}" )"}: ${*}"
 		output >&2 "NOTE:  ${*}"
 	fi
 }  # note
@@ -83,6 +88,7 @@ info() {
 	if [ -z "${*:-}" ]; then
 		output
 	else
+		#output "INFO:  ${BASH_SOURCE[0]:-"$( basename "${0}" )"}: ${*}"
 		output "INFO:  ${*}"
 	fi
 }  # info
@@ -92,7 +98,7 @@ print() {
 		if [ -z "${*:-}" ]; then
 			output >&2
 		else
-			output >&2 "DEBUG: ${*}"
+			output >&2 "DEBUG: ${BASH_SOURCE[0]:-"$( basename "${0}" )"}: ${*}"
 		fi
 		return 0
 	# Unhelpful with 'set -e' ...
@@ -612,8 +618,9 @@ docker_run() {
 			# shellcheck disable=SC2015
 			if
 				[[ "$( uname -s )" != 'Darwin' ]] &&
-				(( $( nproc ) > 1 )) &&
-				$docker info 2>&1 | grep -q -- 'cpuset'
+					(( $( nproc ) > 1 )) &&
+					$docker info 2>&1 |
+						grep -q -- 'cpuset'
 			then
 				echo "--cpuset-cpus 1-$(( $( nproc ) - 1 ))"
 			fi
@@ -918,6 +925,7 @@ docker_run() {
 				next=''
 			fi
 		done | column -t -s $'\t'
+		unset next arg
 		output
 	fi
 
@@ -943,7 +951,40 @@ docker_run() {
 
 		image="${image:-${IMAGE:-gentoo-build:latest}}"
 
-		print "Starting ${BUILD_CONTAINER:+build} container with command '$docker container run ${runargs[*]} ${image} ${*}'"
+		if (( debug )); then
+			local arg=''
+			print "Starting ${BUILD_CONTAINER:+build} container with command '$docker container run \\"
+			for arg in "${runargs[@]}"; do
+				print "        ${arg} \\"
+			done
+			print "    ${image}"
+			for arg in "${@}"; do
+				print "        ${arg} \\"
+			done
+			print "'"
+			unset arg
+			if touch common.run.sh.debug.log; then
+				echo >common.run.sh.debug.log <<-EOF
+					#! /bin/sh
+
+					set -eux
+
+				EOF
+				echo >>common.run.sh.debug.log "$docker container run \\"
+				for arg in "${runargs[@]}"; do
+					echo >>common.run.sh.debug.log "        ${arg} \\"
+				done
+				echo >>common.run.sh.debug.log "    ${image} \\"
+				# Start at $1 as $0 is the command itself...
+				local -i i=1
+				for (( ; i < ${#} ; i++ )); do
+					echo >>common.run.sh.debug.log "        ${!i} \\"
+				done
+				# At this point i == ${#}...
+				echo >>common.run.sh.debug.log "        ${!i}"
+				unset i
+			fi
+		fi
 		# shellcheck disable=SC2086
 		$docker \
 				${DOCKER_VARS:-} \

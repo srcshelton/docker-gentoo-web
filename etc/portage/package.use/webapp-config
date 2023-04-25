@@ -4,9 +4,6 @@
 #      will actually be used to interpret the webapp when accessed via a
 #      browser.
 
-
-*/*					-* asm ipv6 ithreads mdev nptl threads tls-heartbeat zlib # from 'use_essential'
-
 app-admin/webapp-config			 lighttpd
 sys-apps/busybox			 make-symlinks mdev static
 sys-apps/help2man			 nls
@@ -37,6 +34,9 @@ dev-lang/php				 ctype hash phar
 
 # required by dev-php/PEAR-Crypt_GPG
 dev-lang/php				 cli posix
+
+# required by dev-php/pecl-imagick
+media-gfx/imagemagick			-openmp
 
 # required by dev-lang-php[cli]
 #dev-lang/php				 readline
