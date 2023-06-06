@@ -39,7 +39,7 @@ package_version=''
 repo=''
 container_name=''
 container_prefix='buildweb'
-docker_resolve "${service%::*}" "${container_prefix}"
+_docker_resolve "${service%::*}" "${container_prefix}"
 # shellcheck disable=SC2001 # POSIX sh compatibility
 container_name="$( echo "${package}" | sed 's|/|.|' )"
 # shellcheck disable=SC2001 # POSIX sh compatibility
@@ -246,7 +246,7 @@ else
 	ROOT="/" \
 	name="${container_prefix}-${container_name}" \
 	image="${IMAGE}" \
-	docker_run \
+	_docker_run \
 				  ${pre_remove:+"--pre-remove=${pre_remove}"} \
 				  ${pre_pkgs:+"--pre-pkgs=${pre_pkgs}"} \
 				  ${pre_use:+"--pre-use=${pre_use}"} \
