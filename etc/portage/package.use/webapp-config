@@ -7,7 +7,9 @@
 app-admin/webapp-config			 lighttpd
 sys-apps/busybox			 make-symlinks mdev static
 sys-apps/help2man			 nls
+sys-libs/libxcrypt			 static-libs
 www-servers/lighttpd			-* minimal
+virtual/libcrypt			 static-libs
 
 # required by www-servers/lighttpd-1.4.58-r1[dbi]
 # required by dev-db/libdbi-0.9.0::gentoo
