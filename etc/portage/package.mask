@@ -10,6 +10,9 @@ www-servers/apache
 dev-db/mysql
 
 # We're not yet ready for PHP8+
->=dev-lang/php-8
+#>=dev-lang/php-8
+
+# We can't use PHP-8.0 or prior due to lacking OpenSSL-3 support...
+<dev-lang/php-8.1
 
 # vi: set colorcolumn=80 syntax=gentoo-package-mask:

@@ -1,5 +1,5 @@
 
-*/*					-* asm ipv6 ithreads native-extensions mdev nptl split-usr ssp threads tls-heartbeat zlib # ${use_cpu_flags}  # from 'use-essential'
+*/*					-* asm ipv6 ithreads native-extensions ktls mdev nptl split-usr -ssp threads tls-heartbeat zlib # ${use_cpu_flags}  # from 'use-essential'
 
 app-crypt/libb2				 openmp
 sys-devel/gcc				 openmp
