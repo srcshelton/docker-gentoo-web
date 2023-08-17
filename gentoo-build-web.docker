@@ -124,7 +124,7 @@ else
 	fi
 
 	post_pkgs="${post_pkgs:+"${post_pkgs} "}${webapp_pkgs:+"${webapp_pkgs} "}sys-apps/busybox"
-	post_use="${post_use:+"${post_use} "}internal-glib make-symlinks${php_extra_use:+" ${php_extra_use}"} php_targets_${php_target} python_targets_${python_target} static${webapp_use:+" ${webapp_use}"}"
+	post_use="${post_use:+"${post_use} "}internal-glib make-symlinks${php_extra_use:+" ${php_extra_use}"} php_targets_${php_target} python_targets_${python_target}${webapp_use:+" ${webapp_use}"}" # static
 
 	unset webapp_pkgs webapp_use php_extra_use
 fi
@@ -212,6 +212,12 @@ fi
 if [ -s "${base_dir:+"${base_dir}/"}etc/portage/package.use/python_targets" ]; then
 	print "Mounting file '${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.use/python_targets' to '/etc/portage/package.use/python_targets' ..."
 	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+"${DOCKER_EXTRA_MOUNTS} "}--mount type=bind,source=${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.use/python_targets,destination=/etc/portage/package.use/python_targets${docker_readonly:+",${docker_readonly}"}"
+fi
+
+# php_targets
+if [ -s "${base_dir:+"${base_dir}/"}etc/portage/package.use/php_targets" ]; then
+	print "Mounting file '${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.use/php_targets' to '/etc/portage/package.use/php_targets' ..."
+	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+"${DOCKER_EXTRA_MOUNTS} "}--mount type=bind,source=${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.use/php_targets,destination=/etc/portage/package.use/php_targets${docker_readonly:+",${docker_readonly}"}"
 fi
 
 #for webappdir in $( find /var/www/localhost/htdocs/ -mindepth 2 -maxdepth 2 -type d -print ); do
