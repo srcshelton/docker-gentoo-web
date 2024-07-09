@@ -48,7 +48,7 @@ RUN { set -o pipefail 2>/dev/null || true ; } ; \
             grep -v '^export [a-z_]' \
         >> "${ROOT}"/usr/libexec/environment.sh && \
     grep >&2 -- ' ROOT=' "${ROOT}"/usr/libexec/environment.sh && { \
-            printf >&2 "Invalid 'ROOT' directive in '%s/usr/libexec/environment.sh':\n\n%s\n\n" "${ROOT%/}" "$( < "${ROOT}"/usr/libexec/environment.sh )" ; \
+            printf >&2 "Invalid 'ROOT' directive in '%s/usr/libexec/environment.sh':\n\n%s\n\n" "${ROOT%"/"}" "$( < "${ROOT}"/usr/libexec/environment.sh )" ; \
             exit 1 ; \
         } || :
 #RUN printf >&2 " * 'service' stage propagated environment:\n\n%s\n\n" "$( < "${ROOT}"/usr/libexec/environment.sh )"
@@ -65,7 +65,8 @@ RUN { set -o pipefail 2>/dev/null || true ; } ; \
                 version="$( basename "${version}" )" ; \
                 if [ -e "/var/www/localhost/htdocs/${webapp}" ]; then \
                     echo "Upgrading existing webapp '${webapp}:${version}' ..." ; \
-                    webapp-config -s "${server}" -h localhost -d "${webapp}" -U "${webapp}" "${version}" || : ; \
+                    webapp-config -s "${server}" -h localhost -d "${webapp}" -U "${webapp}" "${version}" 2>/dev/null || \
+                    webapp-config -s "${server}" -h localhost -d "${webapp}" -I "${webapp}" "${version}" || : ; \
                 else \
                     echo "Installing new webapp '${webapp}:${version}' ..." ; \
                     webapp-config -s "${server}" -h localhost -d "${webapp}" -I "${webapp}" "${version}" || : ; \
@@ -220,14 +221,14 @@ RUN { set -o pipefail 2>/dev/null || true ; } ; \
             [ -e "${src}" ] || [ -L "${src}" ] || return ; \
             [ -d "${dst}" ] || mkdir -pm 0775 "${dst}" ; \
             if [ -f "${src}" ] || [ -L "${src}" ]; then \
-                if [ -e "${dst%/}/${src}" ]; then \
-                    echo >&2 ">>> Backing-up existing destination object '${dst%/}/${src}' to '${dst%/}/${src}.dist'..." ; \
-                    mv "${dst%/}/${src}" "${dst%/}/${src}.dist" ; \
+                if [ -e "${dst%"/"}/${src}" ]; then \
+                    echo >&2 ">>> Backing-up existing destination object '${dst%"/"}/${src}' to '${dst%"/"}/${src}.dist'..." ; \
+                    mv "${dst%"/"}/${src}" "${dst%"/"}/${src}.dist" ; \
                 else \
-                    [ -n "${DEBUG}" ] && echo >&2 "--- File '${dst%/}/${src}' does not exist prior to deployment ..." ; \
+                    [ -n "${DEBUG}" ] && echo >&2 "--- File '${dst%"/"}/${src}' does not exist prior to deployment ..." ; \
                 fi ; \
                 dir="$( dirname "${src}" )" ; \
-                dir="${dst%/}/${dir#${trim%/}/}" ; \
+                dir="${dst%"/"}/${dir#"${trim%"/"}/"}" ; \
                 [ -n "${DEBUG}" ] && echo >&2 "--> Ensuring directory '${dir}' exists ..." ; \
                 mkdir -pm 0775 "${dir}" ; \
                 echo >&2 ">>> Deploying file '${src}' to '${dir}' ..." ; \
@@ -246,7 +247,7 @@ RUN { set -o pipefail 2>/dev/null || true ; } ; \
                 esac ; \
                 find "${src}" -mindepth 1 -maxdepth 1 -print | \
                 while read -r x; do \
-                    x="${x#${trim%/}/}" ; \
+                    x="${x#"${trim%"/"}/"}" ; \
                     [ -n "${DEBUG}" ] && echo >&2 "--- Recursing for object '${x}' ..." ; \
                     handle_object "${x}" "${dst}" ; \
                 done ; \

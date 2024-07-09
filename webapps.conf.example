@@ -6,17 +6,17 @@ webapp_pkgs=''
 #php_extra_use="${php_extra_use:-}"
 
 # wordpress: +akismet examples +themes vhosts
-webapp_pkgs="${webapp_pkgs:+${webapp_pkgs} }www-apps/wordpress"
-#webapp_use="${webapp_use:+${webapp_use} }akismet themes"
+webapp_pkgs="${webapp_pkgs:+"${webapp_pkgs} "}www-apps/wordpress"
+#webapp_use="${webapp_use:+"${webapp_use} "}akismet themes"
 
 # roundcube: change-password enigma exif ldap managesieve +mysql plugins postgres sqlite ssl spell zxcvbn
-webapp_pkgs="${webapp_pkgs:+${webapp_pkgs} }mail-client/roundcube"
+webapp_pkgs="${webapp_pkgs:+"${webapp_pkgs} "}mail-client/roundcube"
 #php_extra_use="unicode filter session xml zip gd json iconv sockets intl pdo fileinfo curl"
-#webapp_use="${webapp_use:+${webapp_use} }enigma mysql plugins spell sqlite ssl zxcvbn ${php_extra_use}"
+#webapp_use="${webapp_use:+"${webapp_use} "}enigma mysql plugins spell sqlite ssl zxcvbn ${php_extra_use}"
 
 
 # phpsysinfo: apcupsd dmraid freeipmi hddtemp ipmitool ipmiutil iptables lm-sensors mdadm megactl net-snmp nut quota smartmontools uptimed
-webapp_pkgs="${webapp_pkgs:+${webapp_pkgs} }www-apps/phpsysinfo"
+webapp_pkgs="${webapp_pkgs:+"${webapp_pkgs} "}www-apps/phpsysinfo"
 #php_extra_use="simplexml xslt"
 
 # webapp_use & php_extra_use moved to package.use/webapp.use
