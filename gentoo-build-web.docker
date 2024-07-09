@@ -1,26 +1,38 @@
 #! /usr/bin/env bash
 
+declare trace="${TRACE:-}"
+# shellcheck disable=SC2034
+declare debug="${DEBUG:-}"
+
 set -eu
 set -o pipefail
 
 cd "$( dirname "$( readlink -e "${0}" )" )" || exit 1
 
-build_name=''
-base_dir=''
+# Set by common/vars.sh, sourced below...
+#
+#declare build_name=''
+#declare base_dir=''
 # shellcheck disable=SC2034 # Set from common/vars.sh
-use_essential=''
-docker='docker'
-docker_readonly=''
-environment_filter=''
+#declare use_essential=''
+#declare _command='docker'
+#declare docker_readonly=''
+#declare environment_filter=''
 # shellcheck disable=SC2034
-red=''
-blue=''
-reset=''
+#declare red=''
+#declare blue=''
+#declare reset=''
 
 # shellcheck disable=SC1091
 [ ! -s common/vars.sh ] || . common/vars.sh
+# shellcheck disable=SC2034 # Set from common/vars.sh
+[[ -n "${__COMMON_VARS_INCLUDED:-}" ]] || {
+	echo >&2 "FATAL: Inclusion of common defaults failed"
+	exit 1
+}
 
-IMAGE="${build_name}:latest"
+# shellcheck disable=SC2034,SC2154
+declare IMAGE="${build_name}:latest"
 # shellcheck disable=SC1091
 [ -s common/run.sh ] && . common/run.sh >/dev/null
 
@@ -33,20 +45,20 @@ user='root'
 group='root'
 container_cwd='/var/www'
 
-package=''
-package_name=''
-package_version=''
-repo=''
-container_name=''
+#declare package=''
+#declare package_name=''
+#declare package_version=''
+#declare repo=''
+#declare container_name=''
 container_prefix='buildweb'
-_docker_resolve "${service%::*}" "${container_prefix}"
+_docker_resolve "${service%"::"*}" "${container_prefix}"
 # shellcheck disable=SC2001 # POSIX sh compatibility
 container_name="$( echo "${package}" | sed 's|/|.|' )"
 # shellcheck disable=SC2001 # POSIX sh compatibility
 package_name="$( echo "${package_name}" | sed 's|/|.|' )"
-fs_name=''
+#declare fs_name=''
 export container_name package_name
-echo "${service}" | grep -Fq -- '::' && repo="${service#*::}"
+echo "${service}" | grep -Fq -- '::' && repo="${service#*"::"}"
 
 if [ $(( $# )) -gt 1 ] || echo " ${*:-} " | grep -Eq -- ' -(h|-help) '; then
 	output >&2 "Usage: $( basename "${0}" ) [--force]"
@@ -75,11 +87,11 @@ fi
 # from common/vars.sh:
 #use_essential="asm ipv6 ithreads mdev nptl threads tls-heartbeat zlib ${use_cpu_flags}"
 
-pre_remove='' pre_pkgs='' pre_use=''
-with_use='' extra_pkgs=''
-post_pkgs='' post_use=''
-php_target=''
-python_target=''
+declare pre_remove='' pre_pkgs='' pre_use=''
+declare with_use='' extra_pkgs=''
+declare post_pkgs='' post_use=''
+declare php_target=''
+declare python_target=''
 
 # There's probably a better way of doing this, but for now let's assume that
 # the php & python configuration for the root system and the confguration for
@@ -91,24 +103,43 @@ python_target="$( portageq envvar 'PYTHON_SINGLE_TARGET' )"
 print "Building for php version '${php_target}'"
 print "Building for python version '${python_target}'"
 
-php_targets="$( for t in $( portageq envvar PHP_TARGETS ); do echo "php_targets_${t}"; done | sort -V | head -n 1 )"
+declare php_targets="$( for t in $( portageq envvar PHP_TARGETS ); do echo "php_targets_${t}"; done | sort -V | head -n 1 )"
 print "Building for PHP version(s) '${php_targets}'"
+unset php_targets
 
 
 info "Setting build variables for package 'webapp-config' ..."
 pre_pkgs='sys-apps/portage dev-libs/libpcre2 sys-apps/help2man sys-devel/gcc sys-apps/busybox sys-apps/grep sys-apps/sed sys-apps/gawk app-alternatives/awk app-admin/eselect dev-lang/php www-servers/lighttpd virtual/httpd-cgi virtual/httpd-fastcgi virtual/httpd-php'
-pre_use="-lib-only gawk internal-glib pcre ssl unicode php_targets_${php_target} python_targets_${python_target} python_single_target_${python_target}${use_essential_gcc:+" ${use_essential_gcc}"}"
+print "'use_essential_gcc' is '${use_essential_gcc}'"
+pre_use="$( replace_flags \
+		"${use_essential_gcc:-}" \
+		'-lib-only' 'gawk' 'internal-glib' 'pcre' 'ssl' 'unicode' \
+		"php_targets_${php_target}" \
+		"python_targets_${python_target}" \
+		"python_single_target_${python_target}" \
+	-- "${pre_use[@]:-}"
+)"
 extra_pkgs='sys-apps/sed'
 # aolserver apache cherokee gatling lighttpd nginx +portage tracd uwsgi
-with_use="php_targets_${php_target} python_targets_${python_target} python_single_target_${python_target}"
+with_use="$( # <- Syntax
+	replace_flags \
+			"php_targets_${php_target}" \
+			"python_targets_${python_target}" \
+			"python_single_target_${python_target}" \
+		-- "${with_use[@]:-}"
+)"
 post_pkgs='sys-devel/gcc'
-post_use="lib-only"
+post_use="$( replace_flags 'lib-only' -- "${post_use[@]:-}" )"
 container_cmd='/bin/true'
 
 if ! [ -s content/webapps.conf ]; then
 	warn "file 'content/webapps.conf' not found - only static content will be served"
 	sleep 5
 else
+	declare webapp_pkgs=''
+	declare webapp_use=''
+	declare php_extra_use=''
+
 	eval "$( # <- Syntax
 		# shellcheck disable=SC1091
 		. ./content/webapps.conf # >/dev/null 2>&1
@@ -123,8 +154,15 @@ else
 		print "Adding webapp packages '${webapp_pkgs:-}'"
 	fi
 
-	post_pkgs="${post_pkgs:+"${post_pkgs} "}${webapp_pkgs:+"${webapp_pkgs} "}sys-apps/busybox"
-	post_use="${post_use:+"${post_use} "}internal-glib make-symlinks${php_extra_use:+" ${php_extra_use}"} php_targets_${php_target} python_targets_${python_target}${webapp_use:+" ${webapp_use}"}" # static
+	extra_pkgs="${extra_pkgs:+"${extra_pkgs} "}${webapp_pkgs:+"${webapp_pkgs} "}sys-apps/busybox"
+	with_use="$( # <- Syntax
+		replace_flags \
+				'internal-glib' 'make-symlinks' \
+				"${php_extra_use:-}" "php_targets_${php_target}" \
+				"python_targets_${python_target}" \
+				"${webapp_use:-}" \
+			-- "${with_use[@]:-}"
+	)" # static
 
 	unset webapp_pkgs webapp_use php_extra_use
 fi
@@ -137,88 +175,109 @@ fi
 
 [ -n "${trace:-}" ] && set -o xtrace
 
+declare -a docker_extra_mounts=()
+
 # package.accept_keywords
-if [ -e "${base_dir:+"${base_dir}/"}etc/portage/package.accept_keywords" ]; then
-	print "Mounting $( test -d "${base_dir:+"${base_dir}/"}etc/portage/package.accept_keywords" && echo 'directory' || echo 'file' ) '${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.accept_keywords' to '/etc/portage/package.accept_keywords/package.accept_keywords' ..."
-	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+"${DOCKER_EXTRA_MOUNTS} "}--mount type=bind,source=${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.accept_keywords,destination=/etc/portage/package.accept_keywords/package.accept_keywords${docker_readonly:+",${docker_readonly}"}"
-else
+if \
+		! docker_extra_mounts+=( $( add_mount --print \
+				'%base%/etc/portage/package.accept_keywords' \
+				'.../package.accept_keywords'
+			) ) &&
+		! docker_extra_mounts+=( $( add_mount --dir --print \
+				'%base%/etc/portage/package.accept_keywords'
+			) )
+then
 	note "No 'package.accept_keywords' override found in '${PWD}/${base_dir:+"${base_dir}/"}etc/portage/'"
 fi
-if [ -e "${base_dir:+"${base_dir}/"}etc/portage/package.accept_keywords.${arch:-}" ]; then
-	print "Mounting file '${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.accept_keywords.${arch}' to '/etc/portage/package.accept_keywords/${arch}' ..."
-	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+"${DOCKER_EXTRA_MOUNTS} "}--mount type=bind,source=${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.accept_keywords.${arch},destination=/etc/portage/package.accept_keywords/${arch}${docker_readonly:+",${docker_readonly}"}"
-fi
+[[ -z "${arch:-}" ]] || docker_extra_mounts+=( $( add_mount --print \
+		"%base%/etc/portage/package.accept_keywords.${arch}"
+		"/etc/portage/package.accept_keywords/${arch}"
+	) ) || :
 
 # package.license
-if [ -e "${base_dir:+"${base_dir}/"}etc/portage/package.license" ]; then
-	print "Mounting $( test -d "${base_dir:+"${base_dir}/"}etc/portage/package.license" && echo 'directory' || echo 'file' ) '${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.license' to '/etc/portage/package.license' ..."
-	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+"${DOCKER_EXTRA_MOUNTS} "}--mount type=bind,source=${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.license,destination=/etc/portage/package.license${docker_readonly:+",${docker_readonly}"}"
-else
+if ! docker_extra_mounts+=( $( add_mount --print \
+			'%base%/etc/portage/package.license'
+		) )
+then
 	note "No 'package.license' override found in '${PWD}/${base_dir:+"${base_dir}/"}etc/portage/'"
 fi
 
-# NB: test -s returns '0' when called on a directory (even if it's empty...)
-#
 # package.unmask
-if [ -s "${base_dir:+"${base_dir}/"}etc/portage/package.unmask/${package_name#*.}" ] && ! [ -d "${base_dir:+"${base_dir}/"}etc/portage/package.unmask/${package_name#*.}" ]; then
-	print "Mounting file '${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.unmask/${package_name#*.}' to '/etc/portage/package.unmask/${package_name#*.}' ..."
-	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+"${DOCKER_EXTRA_MOUNTS} "}--mount type=bind,source=${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.unmask/${package_name#*.},destination=/etc/portage/package.unmask/${package_name#*.}${docker_readonly:+",${docker_readonly}"}"
-elif [ -s "${base_dir:+"${base_dir}/"}etc/portage/package.unmask/package.unmask" ] && ! [ -d "${base_dir:+"${base_dir}/"}etc/portage/package.unmask/package.unmask" ]; then
-	print "Mounting file '${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.unmask/package.mask' to '/etc/portage/package.mask/package.unmask' ..."
-	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+"${DOCKER_EXTRA_MOUNTS} "}--mount type=bind,source=${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.unmask/package.unmask,destination=/etc/portage/package.unmask/package.unmask${docker_readonly:+",${docker_readonly}"}"
-elif [ -s "${base_dir:+"${base_dir}/"}etc/portage/package.unmask" ] && ! [ -d "${base_dir:+"${base_dir}/"}etc/portage/package.unmask" ]; then
-	print "Mounting file '${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.unmask' to '/etc/portage/package.mask/package.unmask' ..."
-	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+"${DOCKER_EXTRA_MOUNTS} "}--mount type=bind,source=${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.unmask,destination=/etc/portage/package.unmask/package.unmask${docker_readonly:+",${docker_readonly}"}"
-else
+docker_extra_mounts+=( $( add_mount --print \
+		"%base%/etc/portage/package.unmask/${package_name#*"."}"
+	) ) || :
+if \
+		! docker_extra_mounts+=( $( add_mount --print \
+				'%base%/etc/portage/package.unmask/package.unmask'
+			) ) &&
+		! docker_extra_mounts+=( $( add_mount --print \
+				'%base%/etc/portage/package.unmask' \
+				'.../package.unmask'
+			) ) &&
+		! docker_extra_mounts+=( $( add_mount --dir --print \
+				'%base%/etc/portage/package.unmask'
+			) )
+then
 	note "No 'package.unmask' override found in '${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.unmask/'"
 fi
-if [ -e "${base_dir:+"${base_dir}/"}etc/portage/package.unmask.${arch:-}" ]; then
-	print "Mounting file '${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.unmask.${arch}' to '/etc/portage/package.unmask/${arch}' ..."
-	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+"${DOCKER_EXTRA_MOUNTS} "}--mount type=bind,source=${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.unmask.${arch},destination=/etc/portage/package.unmask/${arch}${docker_readonly:+",${docker_readonly}"}"
-fi
+[[ -z "${arch:-}" ]] || docker_extra_mounts+=( $( add_mount --print \
+		"%base%/etc/portage/package.unmask.${arch}" \
+		"/etc/portage/package.unmask/${arch}"
+	) ) || :
 
 # package.mask
-if [ -s "${base_dir:+"${base_dir}/"}etc/portage/package.mask/${package_name#*.}" ] && ! [ -d "${base_dir:+"${base_dir}/"}etc/portage/package.mask/${package_name#*.}" ]; then
-	print "Mounting file '${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.mask/${package_name#*.}' to '/etc/portage/package.mask/${package_name#*.}' ..."
-	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+"${DOCKER_EXTRA_MOUNTS} "}--mount type=bind,source=${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.mask/${package_name#*.},destination=/etc/portage/package.mask/${package_name#*.}${docker_readonly:+",${docker_readonly}"}"
-elif [ -s "${base_dir:+"${base_dir}/"}etc/portage/package.mask/package.mask" ] && ! [ -d "${base_dir:+"${base_dir}/"}etc/portage/package.mask/package.mask" ]; then
-	print "Mounting file '${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.mask/package.mask' to '/etc/portage/package.mask/package.mask' ..."
-	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+"${DOCKER_EXTRA_MOUNTS} "}--mount type=bind,source=${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.mask/package.mask,destination=/etc/portage/package.mask/package.mask${docker_readonly:+",${docker_readonly}"}"
-elif [ -s "${base_dir:+"${base_dir}/"}etc/portage/package.mask" ] && ! [ -d "${base_dir:+"${base_dir}/"}etc/portage/package.mask" ]; then
-	print "Mounting file '${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.mask' to '/etc/portage/package.mask/package.mask' ..."
-	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+"${DOCKER_EXTRA_MOUNTS} "}--mount type=bind,source=${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.mask,destination=/etc/portage/package.mask/package.mask${docker_readonly:+",${docker_readonly}"}"
-else
+docker_extra_mounts+=( $( add_mount --print \
+		"%base%/etc/portage/package.mask/${package_name#*"."}"
+	) ) || :
+if \
+		! docker_extra_mounts+=( $( add_mount --print \
+				'%base%/etc/portage/package.mask/package.mask'
+			) ) &&
+		! docker_extra_mounts+=( $( add_mount --print \
+				'%base%/etc/portage/package.mask' \
+				'.../package.mask'
+			) ) &&
+		! docker_extra_mounts+=( $( add_mount --dir --print \
+				'%base%/etc/portage/package.mask'
+			) )
+then
 	note "No 'package.mask' override found in '${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.mask/'"
 fi
-if [ -e "${base_dir:+"${base_dir}/"}etc/portage/package.mask.${arch:-}" ]; then
-	print "Mounting file '${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.mask.${arch}' to '/etc/portage/package.mask/${arch}' ..."
-	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+"${DOCKER_EXTRA_MOUNTS} "}--mount type=bind,source=${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.mask.${arch},destination=/etc/portage/package.mask/${arch}${docker_readonly:+",${docker_readonly}"}"
-fi
+[[ -z "${arch:-}" ]] || docker_extra_mounts+=( $( add_mount --print \
+		"%base%/etc/portage/package.mask.${arch}" \
+		"/etc/portage/package.mask/${arch}"
+	) ) || :
 
 # package.use
-if [ -s "${base_dir:+"${base_dir}/"}etc/portage/package.use/${package_name#*.}" ]; then
-	print "Mounting file '${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.use/${package_name#*.}' to '/etc/portage/package.use/${package_name#*.}' ..."
-	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+"${DOCKER_EXTRA_MOUNTS} "}--mount type=bind,source=${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.use/${package_name#*.},destination=/etc/portage/package.use/${package_name#*.}${docker_readonly:+",${docker_readonly}"}"
-fi
-if [ -s "${base_dir:+"${base_dir}/"}etc/portage/package.use" ]; then
-	print "Mounting file '${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.use' to '/etc/portage/package.use/package.use' ..."
-	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+"${DOCKER_EXTRA_MOUNTS} "}--mount type=bind,source=${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.use/package.use,destination=/etc/portage/package.use/package.use${docker_readonly:+",${docker_readonly}"}"
-fi
-if ! echo "${DOCKER_EXTRA_MOUNTS}" | grep -Fq -- 'etc/portage/package.use/package.use'; then
+docker_extra_mounts+=( $( add_mount --print \
+		"%base%/etc/portage/package.use/${package_name#*"."}"
+	) ) || :
+if \
+		! docker_extra_mounts+=( $( add_mount --print \
+				'%base%/etc/portage/package.use/package.use'
+			) ) &&
+		! docker_extra_mounts+=( $( add_mount --dir --print \
+				'%base%/etc/portage/package.use'
+			) )
+then
 	note "No 'package.use' override found in '${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.use/'"
 fi
 
 # python_targets
-if [ -s "${base_dir:+"${base_dir}/"}etc/portage/package.use/python_targets" ]; then
-	print "Mounting file '${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.use/python_targets' to '/etc/portage/package.use/python_targets' ..."
-	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+"${DOCKER_EXTRA_MOUNTS} "}--mount type=bind,source=${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.use/python_targets,destination=/etc/portage/package.use/python_targets${docker_readonly:+",${docker_readonly}"}"
-fi
+docker_extra_mounts+=( $( add_mount --print \
+		'%base%/etc/portage/package.use/python_targets'
+	) ) || :
 
 # php_targets
 if [ -s "${base_dir:+"${base_dir}/"}etc/portage/package.use/php_targets" ]; then
 	print "Mounting file '${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.use/php_targets' to '/etc/portage/package.use/php_targets' ..."
 	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+"${DOCKER_EXTRA_MOUNTS} "}--mount type=bind,source=${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.use/php_targets,destination=/etc/portage/package.use/php_targets${docker_readonly:+",${docker_readonly}"}"
 fi
+docker_extra_mounts+=( $( add_mount --print \
+		'%base%/etc/portage/package.use/php_targets'
+	) ) || :
+
+DOCKER_EXTRA_MOUNTS="${docker_extra_mounts[*]:-}"
 
 #for webappdir in $( find /var/www/localhost/htdocs/ -mindepth 2 -maxdepth 2 -type d -print ); do
 #	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+"${DOCKER_EXTRA_MOUNTS} "}--mount type=bind,source=${webappdir}/,destination=${webappdir}/"
@@ -229,7 +288,7 @@ done < <( find /var/www/localhost/htdocs/ -mindepth 2 -maxdepth 2 -type d -print
 unset webappdir
 export DOCKER_EXTRA_MOUNTS
 
-images="$( $docker image list --noheading "${container_prefix}-${package_name}:${package_version}" 2>&1 )"
+images="$( docker image list --noheading "${container_prefix}-${package_name}:${package_version}" 2>&1 )"
 if echo "${images:-}" | grep -q -- "${container_prefix}-${package_name}\s\+${package_version}\s" &&
 	! echo " ${*:-} " | grep -Eq -- ' -(f|-force) '
 then
@@ -241,11 +300,11 @@ else
 	output >&2
 
 	trap '' INT
-	$docker container stop "${container_prefix}-${container_name}" 2>/dev/null || :
-	$docker container rm --volumes "${container_prefix}-${container_name}" 2>/dev/null || :
+	docker container stop "${container_prefix}-${container_name}" 2>/dev/null || :
+	docker container rm --volumes "${container_prefix}-${container_name}" 2>/dev/null || :
 	trap - INT
 
-	build_use="${USE:+"${USE} "}lib-only"
+	build_use="$( replace_flags 'lib-only' -- "${USE:-}" )"
 
 	# shellcheck disable=SC2086 # We don't want a null argument if there are no ${extra_pkgs} items
 	USE="${build_use:-}" \
@@ -272,7 +331,7 @@ else
 	# podman is fragile :(
 	trap '' INT
 	if ! command -v buildah >/dev/null 2>&1; then
-		$docker container commit \
+		docker container commit \
 				"${container_prefix}-${container_name}" \
 				"${container_prefix}-${package_name}:${package_version}" \
 			2>&1 | tee -a ../log/"docker.${container_prefix}-${container_name}.log"
@@ -292,7 +351,7 @@ fi
 unset images
 
 trap '' INT
-$docker container rm --volumes "${container_prefix}-${container_name}" 2>/dev/null || :
+docker container rm --volumes "${container_prefix}-${container_name}" 2>/dev/null || :
 trap - INT
 
 output >&2
@@ -305,8 +364,10 @@ args+=(
 	--build-arg environment_filter="${environment_filter}"
 	--build-arg image_name="${container_prefix}-${package_name}"
 	--build-arg service_cmd="${container_cmd}"
-	  $( [[ -n "${container_cwd:-}" ]] && echo '--build-arg' "service_cwd=${container_cwd}" )
-	  $( [[ -n "${fs_name:-}" ]] && echo '--build-arg' "service_fs_name=${fs_name}" )
+	  #$( [[ -n "${container_cwd:-}" ]] && echo '--build-arg' "service_cwd=${container_cwd}" )
+	  #$( [[ -n "${fs_name:-}" ]] && echo '--build-arg' "service_fs_name=${fs_name}" )
+	  $( add_arg container_cwd --build-arg "service_cwd=${container_cwd}" )
+	  $( add_arg fs_name --build-arg "service_fs_name=${fs_name}" )
 	--build-arg service_group="${group}"
 	--build-arg service_name="${package_name/.//}"
 	--build-arg service_name_short="$( cut -d'/' -f 2- <<<"${package_name/.//}" )"
@@ -321,7 +382,8 @@ args+=(
 )
 
 # shellcheck disable=SC2001 # POSIX sh compatibility
-$docker ${IMAGE_ROOT:+"--storage-opt='' --root ${IMAGE_ROOT}"} \
+#docker ${IMAGE_ROOT:+"--storage-opt='' --root ${IMAGE_ROOT}"} \
+docker $( add_arg IMAGE_ROOT --storage-opt= --root "${IMAGE_ROOT}" ) \
 		image build "${args[@]}" . 2>&1 |
 	tee ../log/"docker.web.${container_name}.log"
 				#--network slirp4netns \
@@ -332,7 +394,7 @@ output " -> ${rc}"
 # Keep image to allow for much faster subsequent rebuilds...
 #if [ $(( ${rc:-1} )) -eq 0 ]; then
 #	trap '' INT
-#	$docker image rm "${container_prefix}-${package_name}:${package_version}" 2>/dev/null || :
+#	docker image rm "${container_prefix}-${package_name}:${package_version}" 2>/dev/null || :
 #	trap - INT
 #fi
 
