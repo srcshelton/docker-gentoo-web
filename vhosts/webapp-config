@@ -75,7 +75,7 @@ vhost_hostname="localhost"
 #
 # you can override this setting by using the -s switch to webapp-config
 
-vhost_server="apache"
+vhost_server="lighttpd"
 
 # which user should own config files?
 # the default is the user currently running webapp-config (which is
