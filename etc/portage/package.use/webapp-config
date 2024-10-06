@@ -4,6 +4,8 @@
 #      will actually be used to interpret the webapp when accessed via a
 #      browser.
 
+*/*										-apng -svg -xattr
+
 app-admin/webapp-config					 lighttpd
 sys-apps/busybox						 make-symlinks mdev static
 sys-apps/help2man						 nls
@@ -38,11 +40,11 @@ dev-lang/php							 ctype hash phar
 dev-lang/php							 cli posix
 
 # required by dev-php/pecl-imagick
-#media-gfx/imagemagick					-openmp
+media-gfx/imagemagick					-openmp
 
 # required by dev-lang-php[cli]
-#dev-lang/php							 readline
-dev-lang/php							 libedit
+#dev-lang/php							-libedit readline
+dev-lang/php							-readline libedit
 
 # required by dev-lang-php[ssl]
 virtual/imap-c-client					 ssl
