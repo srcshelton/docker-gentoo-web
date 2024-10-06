@@ -254,7 +254,7 @@ docker_extra_mounts+=( $( add_mount --print \
 	) ) || :
 if \
 		! docker_extra_mounts+=( $( add_mount --print \
-				'%base%/etc/portage/package.use/package.use'
+				'%base%/etc/portage/package.use/00_package.use'
 			) ) &&
 		! docker_extra_mounts+=( $( add_mount --dir --print \
 				'%base%/etc/portage/package.use'
@@ -265,16 +265,12 @@ fi
 
 # python_targets
 docker_extra_mounts+=( $( add_mount --print \
-		'%base%/etc/portage/package.use/python_targets'
+		'%base%/etc/portage/package.use/20_python_targets'
 	) ) || :
 
 # php_targets
-if [ -s "${base_dir:+"${base_dir}/"}etc/portage/package.use/php_targets" ]; then
-	print "Mounting file '${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.use/php_targets' to '/etc/portage/package.use/php_targets' ..."
-	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+"${DOCKER_EXTRA_MOUNTS} "}--mount type=bind,source=${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.use/php_targets,destination=/etc/portage/package.use/php_targets${docker_readonly:+",${docker_readonly}"}"
-fi
 docker_extra_mounts+=( $( add_mount --print \
-		'%base%/etc/portage/package.use/php_targets'
+		'%base%/etc/portage/package.use/20_php_targets'
 	) ) || :
 
 DOCKER_EXTRA_MOUNTS="${docker_extra_mounts[*]:-}"
