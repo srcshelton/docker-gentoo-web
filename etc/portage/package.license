@@ -25,7 +25,6 @@ app-crypt/rhash				 0BSD
 dev-util/cargo-ebuild			 Apache-2.0-with-LLVM-exceptions Boost-1.0 MPL-2.0 Unicode-DFS-2016 Unlicense ZLIB
 app-containers/aardvark-dns		 Apache-2.0-with-LLVM-exceptions BSD-2-with-patent Unlicense ZLIB
 app-containers/netavark			 Apache-2.0-with-LLVM-exceptions BSD-2-with-patent Boost-1.0 Unicode-DFS-2016 Unlicense ZLIB
-gnome-base/librsvg			 Apache-2.0-with-LLVM-exceptions MPL-2.0 Unicode-DFS-2016
 #dev-libs/libbsd			 BSD-4
 #app-arch/libarchive			 BSD-4 public-domain
 #sys-apps/util-linux			 BSD-4 public-domain
@@ -65,10 +64,10 @@ app-misc/c_rehash			 openssl
 dev-libs/openssl			 openssl
 dev-libs/openssl-compat			 openssl
 sys-auth/passwdqc			 Openwall
-dev-python/docutils			 PSF-2
 dev-python/typing-extensions		 PSF-2
 dev-lang/php				 PHP-3.01 Zend-2.0 gd
 dev-lang/python				 PSF-2
+dev-python/docutils			 PSF-2.4
 #app-arch/lzma				 public-domain
 #app-arch/xz-utils			 public-domain
 #app-crypt/openpgp-keys-gentoo-release	 public-domain
@@ -90,6 +89,10 @@ sys-libs/zlib				 ZLIB
 net-nds/openldap			 OPENLDAP
 
 sys-apps/memtest86-bin			 PassMark-EULA
+
+# Documentation:
+#
+media-gfx/graphviz			 CPL-1.0
 
 # Gentoo stage3 image:
 #
@@ -160,6 +163,7 @@ dev-php/pecl-redis			 PHP-3.01
 # required by services dev-lang/php & www-server/lighttpd
 dev-lang/tcl				 tcltk
 dev-php/pecl-imagick			 PHP-3.01
+gnome-base/librsvg			 Apache-2.0-with-LLVM-exceptions MPL-2.0 Unicode-DFS-2016
 mail-filter/libmilter			 Sendmail
 media-gfx/imagemagick			 imagemagick
 
