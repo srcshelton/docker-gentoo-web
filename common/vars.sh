@@ -94,6 +94,9 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 
 	use_cpu_arch='' use_cpu_flags='' use_cpu_flags_raw=''
 	gcc_target_opts='-march=native' description='' vendor='' sub_cpu_arch=''
+	# rpi-cm rpi-cm2 rpi-cm3 rpi-cm4s rpi-cm5
+	# rpi0 rpi02 rpi2 rpi3 rpi4 rpi400 rpi-cm4 rpi5
+	rpi_model=''
 
 	use_cpu_arch="$( uname -m | cut -c 1-3 | sed 's/aar/arm/' )"
 	case "$( uname -m )" in
@@ -137,32 +140,39 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 			*': Intel(R) Atom(TM) CPU '*' 330 '*' @ '*)
 				use_cpu_arch='x86'
 				use_cpu_flags='mmx mmxext sse sse2 sse3 ssse3'
-				gcc_target_opts='-march=bonnell' ;;
+				gcc_target_opts='-march=bonnell'
+				rust_target_opts='-C target-cpu=bonnell' ;;
 			*': Intel(R) Core(TM) i3-21'*' CPU @ '*)
 				use_cpu_arch='x86'
 				use_cpu_flags='avx mmx mmxext pclmul popcnt sse sse2 sse3 sse4_1 sse4_2 ssse3'
-				gcc_target_opts='-march=sandybridge' ;;
+				gcc_target_opts='-march=sandybridge'
+				rust_target_opts='-C target-cpu=sandybridge' ;;
 			*': Intel(R) Core(TM) i5-24'*' CPU @ '*)
 				use_cpu_arch='x86'
 				use_cpu_flags='aes avx mmx mmxext pclmul popcnt sse sse2 sse3 sse4_1 sse4_2 ssse3'
-				gcc_target_opts='-march=sandybridge -maes' ;;
+				gcc_target_opts='-march=sandybridge -maes'
+				rust_target_opts='-C target-cpu=sandybridge' ;;
 			*': Intel(R) Xeon(R) CPU E5-'*' v2 @ '*)
 				use_cpu_arch='x86'
 				use_cpu_flags='aes avx f16c mmx mmxext pclmul popcnt rdrand sse sse2 sse4_1 sse4_2 ssse3'
-				gcc_target_opts='-march=ivybridge -maes' ;;
+				gcc_target_opts='-march=ivybridge -maes'
+				rust_target_opts='-C target-cpu=ivybridge' ;;
 			*': Intel(R) Xeon(R) CPU E3-'*' v5 @ '*)
 				use_cpu_arch='x86'
 				use_cpu_flags='aes avx avx2 f16c fma3 mmx mmxext pclmul popcnt rdrand sse sse2 sse3 sse4_1 sse4_2 ssse3'
-				gcc_target_opts='-march=skylake -mabm' ;;
+				gcc_target_opts='-march=skylake -mabm'
+				rust_target_opts='-C target-cpu=skylake' ;;
 
 			*': AMD G-T40E '*)
 				use_cpu_arch='x86'
 				use_cpu_flags='mmx mmxext popcnt sse sse2 sse3 sse4a ssse3'
-				gcc_target_opts='-march=btver1' ;;
+				gcc_target_opts='-march=btver1'
+				rust_target_opts='-C target-cpu=btver1' ;;
 			*': AMD GX-412TC '*)
 				use_cpu_arch='x86'
 				use_cpu_flags='aes avx f16c mmx mmxext pclmul popcnt sse sse2 sse3 sse4_1 sse4_2 sse4a ssse3'
-				gcc_target_opts='-march=btver2' ;;
+				gcc_target_opts='-march=btver2'
+				rust_target_opts='-C target-cpu=btver2' ;;
 
 			# ARM CPUs: Only sci-libs/blis seems to make use of
 			# v{x} flags, and v9 isn't yet referenced (although
@@ -172,57 +182,89 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 				# ARMv6, 32bit
 				use_cpu_arch='arm'
 				use_cpu_flags='edsp thumb vfp v4 v5 v6'
-				gcc_target_opts='-mcpu=arm1176jzf-s -mfpu=vfp' ;;
+				gcc_target_opts='-mcpu=arm1176jzf-s -mfpu=vfp'
+				rust_target_opts='-C target-cpu=arm1176jzf-s'
+				rpi_model='rpi0' ;;
 			*': Raspberry Pi 2 '*)
 				# ARMv7, 32bit
 				use_cpu_arch='arm'
 				use_cpu_flags='edsp neon thumb vfp vfpv3 vfpv4 vfp-d32 v4 v5 v6 v7 thumb2'
-				gcc_target_opts='-mcpu=cortex-a7 -mfpu=neon-vfpv4 -mneon-for-64bits -mthumb' ;;
+				gcc_target_opts='-mcpu=cortex-a7 -mfpu=neon-vfpv4 -mneon-for-64bits -mthumb'
+				rust_target_opts='-C target-cpu=cortex-a7'
+				rpi_model='rpi2' ;;
 			*': Raspberry Pi 3 '*|*': Raspberry Pi Zero 2 W '*)
 				# ARMv8, 64bit (no longer needs '-mneon-for-64bits', '-mfpu=*')
 				use_cpu_arch='arm'
 				use_cpu_flags='edsp neon thumb vfp vfpv3 vfpv4 vfp-d32 crc32 v4 v5 v6 v7 thumb2'
-				gcc_target_opts='-mcpu=cortex-a53+crc' ;;
+				gcc_target_opts='-mcpu=cortex-a53+crc'
+				rust_target_opts='-C target-cpu=cortex-a53'
+				case "${description}" in
+					*': Raspberry Pi 3 '*)
+						rpi_model='rpi3' ;;
+					*': Raspberry Pi Zero 2 W '*)
+						rpi_model='rpi02' ;;
+				esac ;;
 			*': Raspberry Pi 4 '*|*': Raspberry Pi Compute Module 4 '*)
 				use_cpu_arch='arm'
 				use_cpu_flags='edsp neon thumb vfp vfpv3 vfpv4 vfp-d32 crc32 v4 v5 v6 v7 v8 thumb2'
-				gcc_target_opts='-mcpu=cortex-a72+crc' ;;
+				gcc_target_opts='-mcpu=cortex-a72+crc'
+				rust_target_opts='-C target-cpu=cortex-a72'
+				case "${description}" in
+					*': Raspberry Pi 4 '*)
+						rpi_model='rpi4' ;;
+					*': Raspberry Pi Compute Module 4 '*)
+						rpi_model='rpi-cm4' ;;
+				esac ;;
 			*': Raspberry Pi 400 '*)
 				use_cpu_arch='arm'
 				use_cpu_flags='edsp neon thumb vfp vfpv3 vfpv4 vfp-d32 crc32 v4 v5 v6 v7 v8 thumb2'
-				gcc_target_opts='-mcpu=cortex-a72+crc' ;;
+				gcc_target_opts='-mcpu=cortex-a72+crc'
+				rust_target_opts='-C target-cpu=cortex-a72'
+				rpi_model='rpi400' ;;
 			*': Raspberry Pi 5 '*)
 				use_cpu_arch='arm'
 				use_cpu_flags='edsp neon thumb vfp vfpv3 vfpv4 vfp-d32 crc32 v4 v5 v6 v7 v8 thumb2'
-				gcc_target_opts='-mcpu=cortex-a72+aes+crc+crypto' ;;
+				gcc_target_opts='-mcpu=cortex-a72+aes+crc+crypto'
+				rust_target_opts='-C target-cpu=cortex-a72'
+				rpi_model='rpi5' ;;
 
 			*': Mixtile Blade 3 '*)
 				# ARMv8, big.LITTLE
 				use_cpu_arch='arm'
 				use_cpu_flags='edsp neon thumb vfp vfpv3 vfpv4 vfp-d32 aes sha1 sha2 crc32 asimddp v4 v5 v6 v7 v8 thumb2'
-				gcc_target_opts='-mcpu=cortex-a76.cortex-a55+aes+crc+crypto+sha2' ;;
+				gcc_target_opts='-mcpu=cortex-a76.cortex-a55+aes+crc+crypto+sha2'
+				# Unlike gcc, clang/rust don't support heterogeneous, systems,
+				# and so the best we can do is to optimise for the smallest
+				# LITTLE core(s) and above, with a potential under-optimisation
+				# of the big cores...
+				rust_target_opts='-C target-cpu=cortex-a55' ;;
 
 			*': 0xd07'|'Apple M1'*)
 				use_cpu_arch='arm'
 				use_cpu_flags='aes crc32 sha1 sha2'
 				#gcc_target_opts='-march=armv8-a'
-				;;
+				rust_target_opts='-C target-cpu=apple-m1' ;;
 			*': 0xd0c'|'Ampere Altra'*)
 				use_cpu_arch='arm'
 				use_cpu_flags='edsp neon thumb vfp vfpv3 vfpv4 vfp-d32 aes sha1 sha2 crc32 asimddp v4 v5 v6 v7 v8 thumb2'
 				#gcc_target_opts='-march=armv8-a'
-				;;
+				rust_target_opts='-C target-cpu=neoverse-n1' ;;
 			*': 0xd40'|'AWS Graviton 3'*)
 				use_cpu_arch='arm'
 				use_cpu_flags='edsp neon thumb vfp vfpv3 vfpv4 vfp-d32 aes sha1 sha2 crc32 sm4 asimddp sve i8mm v4 v5 v6 v7 v8 thumb2'
 				# Requires GCC11+, clang14+
-				#gcc_target_opts='-march=armv8.4-a+crypto+rcpc+sha3+sm4+sve+rng+i8mm+bf16+nodotprod -mcpu=neoverse-v1' ;;
-				gcc_target_opts='-march=zeus+crypto+sha3+sm4+nodotprod+noprofile+nossbs -mcpu=zeus' ;;
+				#gcc_target_opts='-march=armv8.4-a+crypto+rcpc+sha3+sm4+sve+rng+i8mm+bf16+nodotprod -mcpu=neoverse-v1'
+				gcc_target_opts='-march=zeus+crypto+sha3+sm4+nodotprod+noprofile+nossbs -mcpu=zeus'
+				rust_target_opts='-C target-cpu=neoverse-v1' ;;
 			*': 0xd4f'|'AWS Graviton 4'*)
 				use_cpu_arch='arm'
 				use_cpu_flags='edsp neon thumb vfp vfpv3 vfpv4 vfp-d32 aes sha1 sha2 crc32 asimddp sve i8mm v4 v5 v6 v7 v8 thumb2' # v9
 				# Requires GCC13+, clang16+
-				gcc_target_opts='-march=armv9-a+crypto+rcpc+rng+sve2-aes+sve2-sha3+sve2-bitperm+i8mm+bf16+nossbs+nopredres -mcpu=neoverse-v2' ;;
+				# GCC-12.2.0 (Debian 12 default):
+				#gcc_target_opts='-march=armv9-a -mcpu=demeter+crypto+rcpc+sve2-aes+sve2-sha3+noprofile+nomemtag+nossbs+nopredres -mtune=demeter'
+				# GCC-13.3.1:
+				gcc_target_opts='-mcpu=neoverse-v2+crc+sve2-aes+sve2-sha3+nossbs'
+				rust_target_opts='-C target-cpu=neoverse-v2' ;;
 			*)
 				description="$( # <- Syntax
 					echo "${description}" |
@@ -303,7 +345,7 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 			fi
 			;;
 	esac
-	export use_cpu_arch use_cpu_flags gcc_target_opts
+	export use_cpu_arch use_cpu_flags gcc_target_opts rust_target_opts
 
 	# Define essential USE flags
 	#
@@ -327,8 +369,9 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 	#  sys-libs/glibc	    multiarch ssp
 	# (General:			    ipv6 ~openssl~ split-usr ~ssl~ threads)
 	#
-	use_essential="asm ipv6 perl_features_ithreads ktls mdev multiarch native-extensions split-usr ssp threads${use_cpu_flags:+" ${use_cpu_flags}"}"
+	use_essential="${rpi_model:+"${rpi_model} "}asm ipv6 perl_features_ithreads ktls mdev multiarch native-extensions split-usr ssp threads${use_cpu_flags:+" ${use_cpu_flags}"}"
 	export use_essential
+	unset rpi_model
 
 	# Even though we often want a minimal set of flags, gcc's flags are
 	# significant since they may affect the compiler facilities available to
@@ -339,7 +382,7 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 	#
 	# FIXME: Source these flags from package.use
 	#
-	use_essential_gcc="default-stack-clash-protection -default-znow -fortran graphite -jit nptl openmp pch pie -sanitize ssp -vtv zstd"
+	use_essential_gcc="default-stack-clash-protection default-znow graphite -jit nptl openmp pch pie -sanitize ssp -vtv zstd"
 	export use_essential_gcc
 
 	case "$( uname -m )" in

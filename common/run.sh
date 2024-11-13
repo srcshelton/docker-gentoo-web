@@ -115,16 +115,28 @@ info() {
 }  # info
 
 print() {
-	if [[ -n "${debug:-}" ]]; then
+	local -i min=1
+
+	if [[ "${1:-}" =~ ^[0-9]+$ ]]; then
+		(( min = ${1} ))
+		if [[ -n "${2:-}" ]]; then
+			shift
+		else
+			set --
+		fi
+	fi
+	if [[ -n "${debug:-}" ]] && (( debug >= min )); then
 		if [[ -z "${*:-}" ]]; then
 			output >&2
 		else
 			if [[ -n "${BASH_SOURCE[-1]:-}" ]]; then
 				output >&2 "DEBUG: $( # <- Syntax
 					basename "${BASH_SOURCE[-1]}"
-				)->${BASH_SOURCE[0]}: ${*}"
+				)->${BASH_SOURCE[0]}:${FUNCNAME[1]}(${BASH_LINENO[0]}): ${*}"
 			else
-				output >&2 "DEBUG: $( basename "${0}" ): ${*}"
+				output >&2 "DEBUG: $( # <- Syntax
+					basename "${0}"
+				):${FUNCNAME[1]}${BASH_LINENO[0]}: ${*}"
 			fi
 		fi
 		return 0
@@ -149,50 +161,53 @@ replace_flags() {
 	for arg in "${@:-}"; do
 		case "${arg:-}" in
 			--)
-				#print "Switching state from 'list' ('${list[*]:-}') to" \
-				#	"'flags' ('${flags[*]:-}') ..."
+				print 2 "Switching state from 'flags' ('${flags[*]:-}') to" \
+					"'list' ('${list[*]:-}') ..."
 				state=1
 				continue
 				;;
 			''|' ')
-				#print "Dropping arg '${arg:-}' ..."
+				print 2 "Dropping arg '${arg:-}' ..."
 				:
 				;;
 			*' '*)
 				arg="$( sed 's/^ \+// ; s/ \+$//' <<<"${arg}" )"
 				if (( state )); then
-					#print "Adding multi arg '${arg:-}' to list" \
-					#	"'${list[*]:-}' ..."
+					print 2 "Adding multi arg list '${arg:-}' to list" \
+						"'${list[*]:-}' ..."
 					readarray -O "${#list[@]}" -t list < <( # <- Syntax
 						xargs -rn 1 <<<"${arg}"
 					)
-					#print "... list is '${list[*]:-}'"
+					print 2 "... updated list is '${list[*]:-}'"
 				else
-					#print "Adding multi arg '${arg:-}' to flags" \
-					#	"'${flags[*]:-}' ..."
+					print 2 "Adding multi arg flags '${arg:-}' to flags" \
+						"'${flags[*]:-}' ..."
 					readarray -O "${#flags[@]}" -t flags < <( # <- Syntax
 						xargs -rn 1 <<<"${arg}"
 					)
-					#print "... flags is '${flags[*]:-}'"
+					print 2 "... updated flags is '${flags[*]:-}'"
 				fi
 				;;
 			*)
 				if (( state )); then
-					#print "Adding arg '${arg:-}' to list '${list[*]:-}' ..."
+					print 2 "Adding list item '${arg:-}' to list" \
+						"'${list[*]:-}' ..."
 					list+=( "${arg}" )
-					#print "... list is '${list[*]:-}'"
+					print 2 "... updated list is '${list[*]:-}'"
 				else
-					#print "Adding arg '${arg:-}' to flags '${flags[*]:-}' ..."
+					print 2 "Adding flag '${arg:-}' to flags" \
+						"'${flags[*]:-}' ..."
 					flags+=( "${arg}" )
-					#print "... flags is '${flags[*]:-}'"
+					print 2 "... updated flags is '${flags[*]:-}'"
 				fi
 				;;
 		esac
 	done
-	#print "Adding flags '${flags[*]:-}' to list '${list[*]:-}'"
+	print 2 "Finished processing args - will add flags '${flags[*]:-}' to" \
+		"list '${list[*]:-}'"
 
 	if (( 0 == ${#flags[@]} )); then
-		print "WARN: No flags supplied to ${FUNCNAME[0]} - received '${*:-}'"
+		warn "No flags supplied to ${FUNCNAME[0]} - received '${*:-}'"
 		return 1
 	fi
 
@@ -202,47 +217,54 @@ replace_flags() {
 		for arg in "${list[@]}"; do
 			case "${arg}" in
 				"-${flag#"-"}"|"${flag#"-"}"|'')
+					print 2 "Will add flag '${arg}' to list later ..."
 					# Do nothing, as we add the flag below...
 					:
 					# N.B. This means that if we have '-flag flag' then the
 					#      second occurence is dropped...
-					seen["${arg#"-"}"]=1
+					#seen["${arg#"-"}"]=1  # <- This loses the flag!
 					;;
 				*)
 					if ! (( seen["${arg}"] )); then
+						print 2 "Adding flag '${arg}' to list"
 						output+=( "${arg}" )
 						seen["${arg}"]=1
+					else
+						print 2 "Dropping duplicate flag '${arg}' from list"
 					fi
 					continue
 					;;
 			esac
 		done
 
-		# ... and then add '(-)flag' to the start of end of the list
+		# ... and then add '(-)flag' to the start or end of the list
 		#
 		case "${flag}" in
 			'')
 				:
 				;;
 			-*)
+				print 2 "Adding flag '${flag}' to start of list ..."
 				if [[ -z "${output[*]:-}" ]]; then
 					output=( "${flag}" )
 				else
 					output=( "${flag}" "${output[@]}" )
 				fi
-				#print "Adding flag '${flag}' to start of list ..."
 				;;
 			*)
 				if ! (( seen["${flag}"] )); then
+					print 2 "Adding flag '${flag}' to end of list ..."
 					output+=( "${flag}" )
 					seen["${flag}"]=1
+				else
+					print 2 "Dropping duplicate flag '${flag}' from end of" \
+						"list"
 				fi
-				#print "Adding flag '${flag}' to end of list ..."
 				;;
 		esac
 	done
 
-	#print "replace_flags result: '${output[*]:-}'"
+	print 2 "replace_flags result: '${output[*]:-}'"
 	echo "${output[*]:-}"
 }  # replace_flags
 
@@ -645,18 +667,46 @@ _docker_resolve() {
 			# replacement...
 			#
 			versionsort() {
+				local -i name=0
+
 				if [[ "${1:-}" == '-n' ]]; then
-					shift
+					name=1
+					if [[ -n "${2:-}" ]]; then
+						shift
+					else
+						return 1
+					fi
 				fi
-				echo "${@:-}" |
-					xargs -n 1 |
-					sed 's/^.*[a-z]-\([0-9].*\)$/\1/' |
-					sort -V
+
+				if type -pf qatom >/dev/null 2>&1; then
+					if (( name )); then
+						qatom -CF '%{CATEGORY}/%{PN}' $( # <- Syntax
+									xargs -rn 1 <<<"${@:-}"
+								) |
+							sort
+					else
+						qatom -CF '%{PV} %[PR]' $( # <- Syntax
+									xargs -rn 1 <<<"${@:-}" |
+										sed 's/ $// ; s/ /-/'
+								) |
+							sort -V
+					fi
+				else
+					if (( name )); then
+						xargs -rn 1 <<<"${@:-}" |
+							sed 's/-[0-9].*$//' |
+							sort
+					else
+						xargs -rn 1 <<<"${@:-}" |
+							sed 's/^.*[a-z]-\([0-9].*\)$/\1/' |
+							sort -V
+					fi
+				fi
 			}  # versionsort
 			export -f versionsort
 			equery() {
 				local -a args=()
-				local arg='' repopath='' cat='' pkg='' eb=''
+				local arg='' repopath='' cat='' pkg='' pv='' eb=''
 				local slot='' masked='' keyworded=''
 
 				if [[ -z "${arch:-}" ]]; then
@@ -690,20 +740,37 @@ _docker_resolve() {
 
 				for arg in "${@:-}"; do
 					if [[ "${arg}" == */* ]]; then
-						cat="${arg%"/"*}"
+						local stripped_arg="$( # <- Syntax
+							sed 's/^[^a-zA-Z]\+//' <<<"${arg}"
+						)"
+						cat="${stripped_arg%"/"*}"
 						pkg="${arg#*"/"}"
+						unset stripped_arg
 					else
-						pkg="${arg}"
+						local stripped_arg="$( # <- Syntax
+							sed 's/^[^a-zA-Z]\+//' <<<"${arg}"
+						)"
+						pkg="${stripped_arg}"
+						unset stripped_arg
 						cat="$( # <- Syntax
-							eval ls -1d "${repopath}/*/${pkg}*" |
+							eval ls -1d "${repopath}/*/${pkg}" |
 								rev |
-								cut -d'/' -f 3 |
-								rev
+								cut -d'/' -f 2 |
+								rev |
+								sort |
+								uniq
 						)"
 					fi
+
+					if [[ "${pkg}" == *-[0-9]* ]]; then
+						pv="${pkg}"
+						pkg="${pkg%"-"[0-9]*}"
+					fi
+
 					for eb in $( # <- Syntax
-						eval ls -1 "${repopath}/${cat}/${pkg}*" |
-							grep -- '\.ebuild$'
+						eval ls -1 "${repopath}/${cat}/${pkg}/" |
+							grep -- '\.ebuild$' |
+							sort -V
 					); do
 						slot='0.0'
 						masked=' '
@@ -711,15 +778,15 @@ _docker_resolve() {
 						# I - Installed
 						# P - In portage tree
 						# O - In overlay
-						if [[ -s "${repopath}/${cat}/${pkg%"-"[0-9]*}/${eb}" ]]
+						if [[ -s "${repopath}/${cat}/${pkg}/${eb}" ]]
 						then
 							eval "$( # <- Syntax
 								grep 'SLOT=' \
-									"${repopath}/${cat}/${pkg%"-"[0-9]*}/${eb}"
+									"${repopath}/${cat}/${pkg}/${eb}"
 							)"
 							slot="${SLOT:-"${slot}"}"
 							if grep -Fq "~${arch}" \
-									"${repopath}/${cat}/${pkg%"-"[0-9]*}/${eb}"
+									"${repopath}/${cat}/${pkg}/${eb}"
 							then
 								keyworded='~'
 							fi
@@ -1215,9 +1282,13 @@ _docker_run() {
 		local -A mountpointsro=()
 		local -i skipped=0
 		local mp='' src=''  # cwd=''
-		local default_repo_path='' default_distdir_path=''
-		local default_pkgdir_path=''
+		local default_repo_path=''
+		local default_distdir_path='' default_pkgdir_path=''
 
+		# If 'portageq' is not available, then ensure that all of the variables
+		# referenced immediately prior are set so that it then never needs to
+		# be called.
+		#
 		if ! type -pf portageq >/dev/null 2>&1; then
 			default_repo_path='/var/db/repos/gentoo /var/db/repos/srcshelton'
 			default_distdir_path='/var/cache/portage/dist'
@@ -1233,7 +1304,7 @@ _docker_run() {
 
 		# shellcheck disable=SC2046,SC2206,SC2207
 		mirrormountpointsro=(
-			## We need write access to be able to update eclasses...
+			# We need write access to be able to update eclasses...
 			#/etc/portage/repos.conf
 
 			${default_repo_path:-"$( # <- Syntax
@@ -1242,9 +1313,9 @@ _docker_run() {
 				)
 			)"}
 
-			#/etc/locale.gen
+			#/etc/locale.gen  # FIXME: Uncommented in inspect.docker?
 
-			#/usr/src  # Breaks gentoo-kernel-build package
+			#/usr/src  # FIXME: Breaks gentoo-kernel-build package
 		)
 
 		# N.B.: Read repo-specific masks from the host system...
@@ -1283,7 +1354,7 @@ _docker_run() {
 			print "Using architecture '${ARCH:-"${arch}"}' ..."
 			mountpoints["${PKGDIR}"]="/var/cache/portage/pkg/${ARCH:-"${arch}"}/${PKGHOST:-"docker"}"
 		fi
-		mountpoints['/etc/portage/repos.conf']='/etc/portage/repos.conf.host'
+		mountpointsro['/etc/portage/repos.conf']='/etc/portage/repos.conf.host'
 
 		if [[ -s "gentoo-base/etc/portage/package.accept_keywords.${ARCH:-"${arch}"}" ]]; then
 			mountpointsro["${PWD%"/"}/gentoo-base/etc/portage/package.accept_keywords.${ARCH:-"${arch}"}"]="/etc/portage/package.accept_keywords/${ARCH:-"${arch}"}"
