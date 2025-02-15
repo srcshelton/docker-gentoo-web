@@ -1,23 +1,27 @@
 #! /bin/sh
 # shellcheck disable=SC2034
 
+# Are we using docker or podman?
+#
+# N.B. This is overridden if/when common/run.sh is included
+#
 if [ -z "${_command:-}" ]; then
-	# Are we using docker or podman?
-	#
-	# N.B. This is overridden if/when common/run.sh is included
-	#
-	if ! command -v podman >/dev/null 2>&1; then
-		_command='docker'
-
-		#extra_build_args=''
-		docker_readonly='readonly'
-	else
+	if command -v podman >/dev/null 2>&1; then
 		_command='podman'
 
 		#extra_build_args='--format docker'
 		# From release 2.0.0, podman should accept docker 'readonly'
 		# attributes
 		docker_readonly='ro=true'
+	elif command -v docker >/dev/null 2>&1; then
+		_command='docker'
+
+		#extra_build_args=''
+		docker_readonly='readonly'
+	else
+		echo >&2 "FATAL: Cannot find 'docker' or 'podman' executable in path" \
+			"in common/vars.sh"
+		exit 1
 	fi
 	export _command docker_readonly
 fi
@@ -26,31 +30,97 @@ fi
 # directory, we need to be root solely to setup the environment
 # appropriately :(
 #
-if [ "${_command}" = 'podman' ]; then
-	if [ "$( uname -s )" != 'Darwin' ]; then
-		# Update: Support 'core' user for podman+machine Fedora default
-		# user...
-		if [ $(( $( id -u ) )) -ne 0 ] && [ "$( id -un )" != 'core' ]
-		then
-			# This could be an expensive check, so leave it until
-			# last...
-			if "${_command}" info | grep -q -- 'rootless: false'
-			then
-				echo >&2 "FATAL: Please re-run '$(
-						basename "${0}"
-					)' as user 'root'"
-				exit 1
-			fi
-		fi
+_output=''
+rc=0
+if ! [ -x "$( command -v "${_command}" )" ]; then
+	echo >&2 "FATAL: Cannot locate binary '${_command}'"
+	exit 1
+elif ! _output="$( "${_command}" info 2>&1 )"; then
+	"${_command}" info 2>&1 || rc=${?}
+	if [ "${_command}" = 'podman' ]; then
+		echo >&2 "FATAL: Unable to successfully execute '${_command}'" \
+			"(${rc}) - do you need to run '${_command} machine start' or" \
+			"re-run '$( basename "${0}" )' as 'root'?"
+	else
+		echo >&2 "FATAL: Unable to successfully execute '${_command}'" \
+			"(${rc}) - do you need to re-run '$( basename "${0}" )' as 'root'?"
 	fi
+	exit 1
+elif [ "$( uname -s )" != 'Darwin' ] &&
+		[ $(( $( id -u ) )) -ne 0 ] &&
+		echo "${_output}" | grep -Fq -- 'rootless: false'
+then
+	echo >&2 "FATAL: Please re-run '$( basename "${0}")' as user 'root'"
+	exit 1
 fi
+unset _output
 
 # Guard to ensure that we don't accidentally reset the values below through
-# multiple inclusion - 'unset __COMMON_VARS_INCLUDED' is this is explcitly
+# multiple inclusion - 'unset __COMMON_VARS_INCLUDED' if this is explcitly
 # required...
 #
 if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 	export __COMMON_VARS_INCLUDED=1
+
+	# Optional override to specify alternative build-only temporary
+	# directory...
+	#
+	# N.B. If 'pam_mktemp.so' is in-use then there will always be a set 'TMP'
+	#      and 'TMPDIR' in the environment.
+	#
+	if [ "$( uname -s )" != 'Darwin' ]; then
+		graphroot=''
+
+		if [ -n "${PODMAN_TMPDIR:-}" ]; then
+			[[ -z "${debug:-}" ]] ||
+				echo >&2 "DEBUG: Setting PODMAN_TMPDIR ('${PODMAN_TMPDIR}')" \
+					"as temporary directory ..."
+		else
+			# Since we're now using '${_command} system info' to determine the
+			# graphRoot directory, we need to be rootless or root solely to setup
+			# the environment appropriately :(
+			#
+			_output=''
+			if ! [ -x "$( command -v "${_command}" )" ]; then
+				echo >&2 "FATAL: Cannot locate binary '${_command}'"
+				exit 1
+			elif ! _output="$( "${_command}" system info 2>&1 )"; then
+				if [ "${_command}" = 'podman' ]; then
+					echo >&2 "FATAL: Unable to successfully execute '${_command}' - do" \
+						"you need to run '${_command} machine start' or re-run" \
+						"'$( basename "${0}" )' as 'root'?"
+				else
+					echo >&2 "FATAL: Unable to successfully execute '${_command}' - do" \
+						"you need to re-run '$( basename "${0}" )' as 'root'?"
+				fi
+				exit 1
+			elif [ $(( $( id -u ) )) -ne 0 ] &&
+					echo "${_output}" | grep -Fq -- 'rootless: false'
+			then
+				echo >&2 "FATAL: Please re-run '$( basename "${0}")' as user 'root'"
+				exit 1
+			fi
+
+			graphroot="$( # <- Syntax
+					echo "${_output}" |
+						grep -E -- '(graphRoot|Docker Root Dir):' |
+						cut -d':' -f 2- |
+						awk '{ print $1 }'
+				)" || :
+			if [ -z "${graphroot:-}" ]; then
+				echo >&2 "FATAL: Cannot determine ${_command} root directory"
+				exit 1
+			fi
+
+			unset _output
+		fi
+
+		tmp="${PODMAN_TMPDIR:-"${graphroot}"}/tmp"
+		mkdir -p "${tmp:="/var/lib/containers/storage/tmp"}"
+		export TMPDIR="${tmp}"
+		export TMP="${tmp}"
+		unset tmp graphroot
+	fi
 
 	# Alerting options...
 	#
@@ -94,8 +164,8 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 
 	use_cpu_arch='' use_cpu_flags='' use_cpu_flags_raw=''
 	gcc_target_opts='-march=native' description='' vendor='' sub_cpu_arch=''
-	# rpi-cm rpi-cm2 rpi-cm3 rpi-cm4s rpi-cm5
-	# rpi0 rpi02 rpi2 rpi3 rpi4 rpi400 rpi-cm4 rpi5
+	# rpi-cm rpi-cm2 rpi-cm3 rpi-cm4s
+	# rpi0 rpi02 rpi2 rpi3 rpi4 rpi400 rpi-cm4 rpi5 rpi-cm5 rpi500
 	rpi_model=''
 
 	use_cpu_arch="$( uname -m | cut -c 1-3 | sed 's/aar/arm/' )"
@@ -106,6 +176,7 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 	if command -v cpuid2cpuflags >/dev/null 2>&1; then
 		use_cpu_flags="$( cpuid2cpuflags | cut -d':' -f 2- )"
 	else
+		# N.B. 'uname -s' returns 'Linux' in Darwin podman-machine...
 		if [ "$( uname -s )" = 'Darwin' ]; then
 			description="$( sysctl -n machdep.cpu.brand_string )"
 		elif [ -s /sys/firmware/devicetree/base/model ]; then
@@ -113,10 +184,10 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 				printf ': '
 				tr -d '\0' < /sys/firmware/devicetree/base/model
 			)" || :
-		elif [ -s /proc/devicetree/model ]; then
+		elif [ -s /proc/device-tree/model ]; then
 			description="$( # <- Syntax
 				printf ': '
-				tr -d '\0' < /proc/devicetree/model
+				tr -d '\0' < /proc/device-tree/model
 			)" || :
 		else
 			description="$( # <- Syntax
@@ -131,6 +202,20 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 				grep -F 'CPU part' /proc/cpuinfo |
 					sort |
 					tail -n 1
+			)" || :
+		fi
+		if [ -z "${description:-}" ] || echo "${description}" | grep -q '0x0\+'
+		then
+			description="$( # <- Syntax
+				grep -F \
+							-e 'CPU implementer' \
+							-e 'CPU architecture' \
+						/proc/cpuinfo |
+					sort -r |
+					uniq |
+					cut -d':' -f 2 |
+					awk '{print $1}' |
+					xargs -r
 			)" || :
 		fi
 
@@ -173,6 +258,16 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 				use_cpu_flags='aes avx f16c mmx mmxext pclmul popcnt sse sse2 sse3 sse4_1 sse4_2 sse4a ssse3'
 				gcc_target_opts='-march=btver2'
 				rust_target_opts='-C target-cpu=btver2' ;;
+			*': AMD EPYC 7R32')
+				use_cpu_arch='x86'
+				use_cpu_flags='aes avx avx2 f16c fma3 mmx mmxext pclmul popcnt rdrand sha sse sse2 sse3 sse4_1 sse4_2 sse4a ssse3'
+				gcc_target_opts='-march=znver2'
+				rust_target_opts='-C target-cpu=znver2' ;;
+			*': AMD EPYC 9R14')
+				use_cpu_arch='x86'
+				use_cpu_flags='aes avx avx2 avx512_bf16 avx512_bitalg avx512_vbmi2 avx512_vnni avx512_vpopcntdq avx512bw avx512cd avx512dq avx512f avx512ifma avx512vbmi avx512vl f16c fma3 mmx mmxext pclmul popcnt rdrand sha sse sse2 sse3 sse4_1 sse4_2 sse4a ssse3 vpclmulqdq'
+				gcc_target_opts='-march=znver4'
+				rust_target_opts='-C target-cpu=znver4' ;;
 
 			# ARM CPUs: Only sci-libs/blis seems to make use of
 			# v{x} flags, and v9 isn't yet referenced (although
@@ -223,23 +318,29 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 				rpi_model='rpi400' ;;
 			*': Raspberry Pi 5 '*)
 				use_cpu_arch='arm'
-				use_cpu_flags='edsp neon thumb vfp vfpv3 vfpv4 vfp-d32 crc32 v4 v5 v6 v7 v8 thumb2'
-				gcc_target_opts='-mcpu=cortex-a72+aes+crc+crypto'
-				rust_target_opts='-C target-cpu=cortex-a72'
+				use_cpu_flags='edsp neon thumb vfp vfpv3 vfpv4 vfp-d32 aes sha1 sha2 crc32 asimddp v4 v5 v6 v7 v8 thumb2'
+				gcc_target_opts='-mcpu=cortex-a76+crc+crypto'
+				rust_target_opts='-C target-cpu=cortex-a76'
 				rpi_model='rpi5' ;;
+			*': Raspberry Pi 500 '*)
+				use_cpu_arch='arm'
+				use_cpu_flags='edsp neon thumb vfp vfpv3 vfpv4 vfp-d32 aes sha1 sha2 crc32 asimddp v4 v5 v6 v7 v8 thumb2'
+				gcc_target_opts='-mcpu=cortex-a76+crc+crypto'
+				rust_target_opts='-C target-cpu=cortex-a76'
+				rpi_model='rpi500' ;;
 
-			*': Mixtile Blade 3 '*)
+			*': Mixtile Blade 3'*|*': Rockchip RK3588')
 				# ARMv8, big.LITTLE
 				use_cpu_arch='arm'
 				use_cpu_flags='edsp neon thumb vfp vfpv3 vfpv4 vfp-d32 aes sha1 sha2 crc32 asimddp v4 v5 v6 v7 v8 thumb2'
 				gcc_target_opts='-mcpu=cortex-a76.cortex-a55+aes+crc+crypto+sha2'
-				# Unlike gcc, clang/rust don't support heterogeneous, systems,
+				# Unlike gcc, clang/rust don't support heterogeneous systems
 				# and so the best we can do is to optimise for the smallest
 				# LITTLE core(s) and above, with a potential under-optimisation
 				# of the big cores...
 				rust_target_opts='-C target-cpu=cortex-a55' ;;
 
-			*': 0xd07'|'Apple M1'*)
+			*': 0xd07'|'0x61 8'|'Apple M1'*)
 				use_cpu_arch='arm'
 				use_cpu_flags='aes crc32 sha1 sha2'
 				#gcc_target_opts='-march=armv8-a'
@@ -253,18 +354,29 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 				use_cpu_arch='arm'
 				use_cpu_flags='edsp neon thumb vfp vfpv3 vfpv4 vfp-d32 aes sha1 sha2 crc32 sm4 asimddp sve i8mm v4 v5 v6 v7 v8 thumb2'
 				# Requires GCC11+, clang14+
-				#gcc_target_opts='-march=armv8.4-a+crypto+rcpc+sha3+sm4+sve+rng+i8mm+bf16+nodotprod -mcpu=neoverse-v1'
 				gcc_target_opts='-march=zeus+crypto+sha3+sm4+nodotprod+noprofile+nossbs -mcpu=zeus'
 				rust_target_opts='-C target-cpu=neoverse-v1' ;;
 			*': 0xd4f'|'AWS Graviton 4'*)
 				use_cpu_arch='arm'
-				use_cpu_flags='edsp neon thumb vfp vfpv3 vfpv4 vfp-d32 aes sha1 sha2 crc32 asimddp sve i8mm v4 v5 v6 v7 v8 thumb2' # v9
 				# Requires GCC13+, clang16+
-				# GCC-12.2.0 (Debian 12 default):
-				#gcc_target_opts='-march=armv9-a -mcpu=demeter+crypto+rcpc+sve2-aes+sve2-sha3+noprofile+nomemtag+nossbs+nopredres -mtune=demeter'
-				# GCC-13.3.1:
-				gcc_target_opts='-mcpu=neoverse-v2+crc+sve2-aes+sve2-sha3+nossbs'
-				rust_target_opts='-C target-cpu=neoverse-v2' ;;
+				rust_target_opts='-C target-cpu=neoverse-v2'
+
+				# We're at the limit of the data we can get from /proc/cpuinfo,
+				# so let's see whether this is enough of a differentiator
+				# before having to parse the output of 'lscpu'...
+				case "$( grep 'CPU revision' /proc/cpuinfo | sort | uniq | cut -d':' -f 2 | awk '{print $1}' )" in
+					'0')
+						# GH200 (via qemu):
+						gcc_target_opts='-mcpu=neoverse-v2+crypto+sve2-sm4+sve2-aes+sve2-sha3+norng+nomemtag+nopredres'
+						use_cpu_flags='edsp neon thumb vfp vfpv3 vfpv4 vfp-d32 aes sha1 sha2 crc32 sm4 asimddp sve i8mm v4 v5 v6 v7 v8 thumb2' # v9
+						;;
+					'1')
+						# AWS Graviton 4:
+						gcc_target_opts='-mcpu=neoverse-v2+crc+sve2-aes+sve2-sha3+nossbs'
+						use_cpu_flags='edsp neon thumb vfp vfpv3 vfpv4 vfp-d32 aes sha1 sha2 crc32 asimddp sve i8mm v4 v5 v6 v7 v8 thumb2' # v9
+						;;
+				esac
+				;;
 			*)
 				description="$( # <- Syntax
 					echo "${description}" |
@@ -275,7 +387,7 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 					grep -- '^vendor_id' /proc/cpuinfo |
 						tail -n 1 |
 						awk -F': ' '{ print $2 }'
-				)"
+				)" || :
 				if [ -z "${vendor:-}" ]; then
 					vendor="$( # <- Syntax
 						grep -- '^CPU implementer' /proc/cpuinfo |
@@ -304,7 +416,11 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 									if echo "${line}" | grep "^${flag} - " | grep -Fq -- '[' ; then
 										count=2
 										while true; do
-											extra="$( echo "${line}" | awk -F'[' "{ print \$${count} }" | cut -d']' -f 1 )"
+											extra="$( # <- Syntax
+												echo "${line}" |
+													awk -F'[' "{ print \$${count} }" |
+													cut -d']' -f 1
+											)"
 											if [ -n "${extra:-}" ]; then
 												flag="${flag}|${extra}"
 											else
@@ -314,7 +430,13 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 										done
 										unset extra count
 									fi
-									use_cpu_flags="${use_cpu_flags:-}$( grep -E -- '^(Features|flags)' /proc/cpuinfo | tail -n 1 | awk -F': ' '{ print $2 }' | grep -Eq -- "${flag}" && echo " ${flag}" | cut -d'|' -f 1 )"
+									use_cpu_flags="${use_cpu_flags:-}$( # <- Syntax
+										grep -E -- '^(Features|flags)' /proc/cpuinfo |
+												tail -n 1 |
+												awk -F': ' '{ print $2 }' |
+												grep -Eq -- "${flag}" &&
+											echo " ${flag}" | cut -d'|' -f 1
+									)"
 								done < /var/db/repo/gentoo/profiles/desc/cpu_flags_x86.desc
 
 								use_cpu_flags="${use_cpu_flags#" "}"
@@ -391,7 +513,7 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 			# memtotal is rounded-down, so 4GB systems have a memtotal of 3...
 			if [ $(( memtotal )) -ge 4 ]; then
 				# Enable pypy support for Portage accleration of ~35%!
-				pkg_pypy="dev-python/pypy3"
+				pkg_pypy="dev-lang/pypy"
 				pkg_pypy_use="bzip2 jit"
 				pkg_pypy_post_remove="dev-lang/python:2.7"
 				# Update: dev-python/pypy3_10-exe-7.3.12_p2 now requires 10GB
@@ -428,12 +550,13 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 	: $(( jobs = $( nproc ) ))
 	: $(( load = jobs ))
 	if [ $(( jobs )) -ge 2 ]; then
+		: $(( load = load - 1 ))
+
 		if command -v dc >/dev/null 2>&1; then
 			jobs="$( echo "${jobs} 0.75 * p" | dc | cut -d'.' -f 1 )"
 		else
 			: $(( jobs = jobs - 1 ))
 		fi
-		: $(( load = load - 1 ))
 	fi
 	export JOBS="${EMERGE_JOBS:-"${jobs}"}"
 	export MAXLOAD="${EMERGE_MAXLOAD:-"${load}.00"}"
@@ -449,13 +572,6 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 	#	fi
 	#fi
 	#unset store
-
-	# Optional override to specify alternative build temporary directory
-	#export TMPDIR=/var/tmp
-	tmp="$( $_command system info | grep -E -- '(graphRoot|Docker Root Dir):' | cut -d':' -f 2- | awk '{ print $1 }' )/tmp"
-	mkdir -p "${tmp:="/var/lib/containers/storage/tmp"}"
-	export TMPDIR="${tmp}"
-	unset tmp
 
 	python_default_target='python3_12'
 	export python_default_target

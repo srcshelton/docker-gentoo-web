@@ -79,6 +79,7 @@ dev-python/docutils			 PSF-2.4
 net-misc/iputils			 rdisc
 sys-libs/db				 Sleepycat
 sys-apps/debianutils			 SMAIL
+dev-util/bindgen			 Unicode-DFS-2016
 net-dns/libidn2			 	 unicode
 app-editors/vim				 vim
 app-editors/vim-core			 vim
@@ -101,18 +102,18 @@ dev-lang/tcl				 Spencer-99
 # clang:
 #
 
-sys-devel/clang				 Apache-2.0-with-LLVM-exceptions UoI-NCSA
-sys-devel/clang-common			 Apache-2.0-with-LLVM-exceptions UoI-NCSA
-sys-devel/clang-runtime			 metapackage
-sys-devel/lld				 Apache-2.0-with-LLVM-exceptions UoI-NCSA
-sys-devel/llvm				 Apache-2.0-with-LLVM-exceptions UoI-NCSA rc
-sys-devel/llvm-common			 Apache-2.0-with-LLVM-exceptions UoI-NCSA
-sys-libs/compiler-rt			 Apache-2.0-with-LLVM-exceptions
-sys-libs/compiler-rt-sanitizers		 Apache-2.0-with-LLVM-exceptions
-sys-libs/libcxxabi			 Apache-2.0-with-LLVM-exceptions
-sys-libs/libcxx				 Apache-2.0-with-LLVM-exceptions
-sys-libs/libomp				 Apache-2.0-with-LLVM-exceptions
-sys-libs/llvm-libunwind			 Apache-2.0-with-LLVM-exceptions
+llvm-core/clang				 Apache-2.0-with-LLVM-exceptions UoI-NCSA
+llvm-core/clang-common			 Apache-2.0-with-LLVM-exceptions UoI-NCSA
+llvm-core/clang-runtime			 metapackage
+llvm-core/lld				 Apache-2.0-with-LLVM-exceptions UoI-NCSA
+llvm-core/llvm				 Apache-2.0-with-LLVM-exceptions UoI-NCSA rc
+llvm-core/llvm-common			 Apache-2.0-with-LLVM-exceptions UoI-NCSA
+llvm-runtimes/compiler-rt		 Apache-2.0-with-LLVM-exceptions
+llvm-runtimes/compiler-rt-sanitizers	 Apache-2.0-with-LLVM-exceptions
+llvm-runtimes/libcxxabi			 Apache-2.0-with-LLVM-exceptions
+llvm-runtimes/libcxx			 Apache-2.0-with-LLVM-exceptions
+llvm-runtimes/openmp			 Apache-2.0-with-LLVM-exceptions
+llvm-runtimes/libunwind			 Apache-2.0-with-LLVM-exceptions
 
 
 app-arch/lzlib				 libstdc++
@@ -167,6 +168,7 @@ dev-php/pecl-redis			 PHP-3.01
 
 # required by services dev-lang/php & www-server/lighttpd
 dev-lang/tcl				 tcltk
+dev-php/Masterminds-HTML5		 HTML5-PHP
 dev-php/pecl-imagick			 PHP-3.01
 gnome-base/librsvg			 Apache-2.0-with-LLVM-exceptions MPL-2.0 Unicode-DFS-2016
 mail-filter/libmilter			 Sendmail
@@ -321,4 +323,4 @@ net-analyzer/net-snmp			 HPND
 #
 # cat /var/db/pkg/*/*/LICENSE | xargs -n 1 | grep -Ev '^(\(|\|\||\))$' | sort | uniq -c | sort -rn
 
-# vi: set noet sw=8 ts=8 syntax=gentoo-package-license:
+# vi: set noet nowrap sw=8 ts=8 syntax=gentoo-package-license:
