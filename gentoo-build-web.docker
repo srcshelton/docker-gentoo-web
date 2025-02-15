@@ -1,4 +1,6 @@
 #! /usr/bin/env bash
+#
+# shellcheck disable=SC2207
 
 declare trace="${TRACE:-}"
 # shellcheck disable=SC2034
@@ -52,7 +54,7 @@ container_cwd='/var/www'
 #declare container_name=''
 container_prefix='buildweb'
 _docker_resolve "${service%"::"*}" "${container_prefix}"
-# shellcheck disable=SC2001 # POSIX sh compatibility
+# shellcheck disable=SC2001,SC2154 # POSIX sh compatibility
 container_name="$( echo "${package}" | sed 's|/|.|' )"
 # shellcheck disable=SC2001 # POSIX sh compatibility
 package_name="$( echo "${package_name}" | sed 's|/|.|' )"
@@ -103,13 +105,15 @@ python_target="$( portageq envvar 'PYTHON_SINGLE_TARGET' )"
 print "Building for php version '${php_target}'"
 print "Building for python version '${python_target}'"
 
-declare php_targets="$( for t in $( portageq envvar PHP_TARGETS ); do echo "php_targets_${t}"; done | sort -V | head -n 1 )"
+declare php_targets=''
+php_targets="$( for t in $( portageq envvar PHP_TARGETS ); do echo "php_targets_${t}"; done | sort -V | head -n 1 )"
 print "Building for PHP version(s) '${php_targets}'"
 unset php_targets
 
 
 info "Setting build variables for package 'webapp-config' ..."
 pre_pkgs='sys-apps/portage dev-libs/libpcre2 sys-apps/help2man sys-devel/gcc sys-apps/busybox sys-apps/grep sys-apps/sed sys-apps/gawk app-alternatives/awk app-admin/eselect dev-lang/php www-servers/lighttpd virtual/httpd-cgi virtual/httpd-fastcgi virtual/httpd-php'
+# shellcheck disable=SC2154
 print "'use_essential_gcc' is '${use_essential_gcc}'"
 pre_use="$( replace_flags \
 		"${use_essential_gcc:-}" \
@@ -289,9 +293,11 @@ if echo "${images:-}" | grep -q -- "${container_prefix}-${package_name}\s\+${pac
 	! echo " ${*:-} " | grep -Eq -- ' -(f|-force) '
 then
 	output >&2
+	# shellcheck disable=SC2154
 	output >&2 " ${blue}*${reset} Re-using existing '${package_name}:${package_version}' root image ..."
 else
 	output >&2
+	# shellcheck disable=SC2154
 	output >&2 " ${blue}*${reset} Building '${package_name}:${package_version}' root image ..."
 	output >&2
 
@@ -355,7 +361,7 @@ output >&2 " ${blue}*${reset} Building ${package_name}:${package_version} (${con
 output >&2
 
 declare -a args=()
-# shellcheck disable=SC2207
+# shellcheck disable=SC2154,SC2207
 args+=(
 	--build-arg environment_filter="${environment_filter}"
 	--build-arg image_name="${container_prefix}-${package_name}"
@@ -379,6 +385,7 @@ args+=(
 
 # shellcheck disable=SC2001 # POSIX sh compatibility
 #docker ${IMAGE_ROOT:+"--storage-opt='' --root ${IMAGE_ROOT}"} \
+# shellcheck disable=SC2046
 docker $( add_arg IMAGE_ROOT --storage-opt= --root "${IMAGE_ROOT}" ) \
 		image build "${args[@]}" . 2>&1 |
 	tee ../log/"docker.web.${container_name}.log"
