@@ -139,10 +139,13 @@ print() {
 		if [[ -z "${*:-}" ]]; then
 			output >&2
 		else
-			if [[ -n "${BASH_SOURCE[-1]:-}" ]] && [[ "${BASH_SOURCE[-1]:-}" != "${BASH_SOURCE[0]}" ]]; then
+			if [[ -n "${BASH_SOURCE[-1]:-}" ]] &&
+					[[ "${BASH_SOURCE[-1]:-}" != "${BASH_SOURCE[0]}" ]]
+			then
 				output >&2 "DEBUG: $( # <- Syntax
 						basename "${BASH_SOURCE[-1]}"
-					)->${BASH_SOURCE[0]}:${FUNCNAME[1]}(${BASH_LINENO[0]}): ${*}"
+					)->${BASH_SOURCE[0]}:${FUNCNAME[1]}(${BASH_LINENO[0]}):" \
+					"${*}"
 			else
 				output >&2 "DEBUG: $( # <- Syntax
 						basename "${0}"
@@ -160,6 +163,16 @@ export -f output die error warn note info print
 
 # Utility functions...
 #
+
+# Provide a wrapper to try to run mkdir/rm/etc. as the current user, and then
+# via the 'sudo' binary if this fails.  Note that this is intended for atomic
+# operations without side-effects, rather than as a universal 'sudo'
+# replacement...
+#
+sudo() {
+	"${@:-}" ||
+		"$( type -pf "${0}" )" "${@:-}"
+}  # sudo
 
 replace_flags() {
 	# list="$( replace_flags <new> [flags] [to] [add] -- existing_list[@] )"
@@ -427,7 +440,7 @@ add_mount() {
 	return 0
 }  # add_mount
 
-export -f replace_flags add_arg add_mount
+export -f sudo replace_flags add_arg add_mount
 
 #[[ -n "${trace:-}" ]] && set -o xtrace
 
@@ -583,12 +596,15 @@ _docker_parse() {
 				extra+=( "${dp_arg}" )
 				print "Adding extra argument '${dp_arg}'"
 
-			elif echo "${dp_arg}" |
-					grep -Eq -- '((virtual|[a-z]{3,7}-[a-z]+)/)?[a-zA-Z0-9][a-zA-Z0-9_.+-]+\*?(:[0-9.]+\*?)?(::.*)?$'
-			then
 				# Currently category general names are between 3 and
 				# 7 ("gnustep") letters, package names start with [023469Z] or
 				# lower-case...
+				#
+				# Update: There's now 'container' (9)
+				#
+			elif echo "${dp_arg}" |
+					grep -Eq -- '((virtual|[a-z]{3,9}-[a-z]+)/)?[a-zA-Z0-9][a-zA-Z0-9_.+-]+\*?(:[0-9.]+\*?)?(::.*)?$'
+			then
 				if [[ -z "${package:-}" ]]; then
 					package="${dp_arg%"::"*}"
 					print "Setting package to '${package}'"
@@ -788,7 +804,7 @@ _docker_resolve() {
 		else
 			equery() {
 				local -a args=()
-				local arg='' repopath='' cat='' pkg='' eb=''  # pv=''
+				local arg='' repopaths='' repopath='' cat='' pkg='' eb=''  # pv=''
 				local slot='' masked='' keyworded=''
 
 				if [[ -z "${arch:-}" ]]; then
@@ -806,86 +822,96 @@ _docker_resolve() {
 				done
 
 				if type -pf portageq; then
-					repopath="$( portageq get_repo_path "${EROOT:-"/"}" "$( #
-						portageq get_repos "${EROOT:-"/"}" |
-							xargs -rn 1 2>/dev/null |
-							grep -iw gentoo |
-							tail -n 1
-					)" )"
+					repopaths="$( portageq get_repo_path "${EROOT:-"/"}" "$( #
+							portageq get_repos "${EROOT:-"/"}" |
+								xargs -rn 1 2>/dev/null |
+								grep -iw gentoo |
+								tail -n 1
+						)" )"
+				elif [[ -d /etc/portage/repos.conf ]]; then
+					repopaths="$( # <- Syntax
+							grep '^\s*location\s*=\s*' /etc/portage/repos.conf/*.conf |
+								cut -d'=' -f 2- |
+								awk '{print $NF}'
+						)"
 				elif [[ -d /var/db/repos ]]; then
-					repopath='/var/db/repos/gentoo'
+					repopaths='/var/db/repos/gentoo'
 				elif [[ -d /var/db/repo ]]; then
-					repopath='/var/db/repo/gentoo'
+					repopaths='/var/db/repo/gentoo'
 				else
 					die "Unable to locate 'gentoo' repo directory"
 				fi
 
 				for arg in "${@:-}"; do
-					if [[ "${arg}" == */* ]]; then
-						local stripped_arg=''
-						stripped_arg="$( # <- Syntax
-								# shellcheck disable=SC2001
-								sed 's/^[^a-zA-Z]\+//' <<<"${arg}"
-							)"
-						cat="${stripped_arg%"/"*}"
-						pkg="${arg#*"/"}"
-						unset stripped_arg
-					else
-						local stripped_arg=''
-						stripped_arg="$( # <- Syntax
-								# shellcheck disable=SC2001
-								sed 's/^[^a-zA-Z]\+//' <<<"${arg}"
-							)"
-						pkg="${stripped_arg}"
-						unset stripped_arg
-						cat="$( # <- Syntax
-								eval ls -1d "${repopath}/*/${pkg}" |
-									rev |
-									cut -d'/' -f 2 |
-									rev |
-									sort |
-									uniq
-							)"
-					fi
-
-					if [[ "${pkg}" == *-[0-9]* ]]; then
-						#pv="${pkg}"
-						pkg="${pkg%"-"[0-9]*}"
-					fi
-
-					for eb in $( # <- Syntax
-							eval ls -1 "${repopath}/${cat}/${pkg}/" |
-								grep -- '\.ebuild$' |
-								sort -V
-						)
-					do
-						slot='0.0'
-						masked=' '
-						keyworded=' '
-						# I - Installed
-						# P - In portage tree
-						# O - In overlay
-						if [[ -s "${repopath}/${cat}/${pkg}/${eb}" ]]; then
-							# Some SLOT definitions reference other variables,
-							# such as LLVM_MAJOR :(
-							export LLVM_MAJOR=0
-							eval "$( # <- Syntax
-									grep 'SLOT=' \
-										"${repopath}/${cat}/${pkg}/${eb}"
+					for repopath in ${repopaths}; do
+						if [[ "${arg}" == */* ]]; then
+							local stripped_arg=''
+							stripped_arg="$( # <- Syntax
+									# shellcheck disable=SC2001
+									sed 's/^[^a-zA-Z]\+//' <<<"${arg}"
 								)"
-							unset LLVM_MAJOR
-							slot="${SLOT:-"${slot}"}"
-							if grep -Eq "~${arch}([^-]|$)" \
-									"${repopath}/${cat}/${pkg}/${eb}"
-							then
-								keyworded='~'
-							fi
+							cat="${stripped_arg%"/"*}"
+							pkg="${arg#*"/"}"
+							unset stripped_arg
+						else
+							local stripped_arg=''
+							stripped_arg="$( # <- Syntax
+									# shellcheck disable=SC2001
+									sed 's/^[^a-zA-Z]\+//' <<<"${arg}"
+								)"
+							pkg="${stripped_arg}"
+							unset stripped_arg
+							cat="$( # <- Syntax
+									eval ls -1d "${repopath}/*/${pkg}" \
+											2>/dev/null |
+										rev |
+										cut -d'/' -f 2 |
+										rev |
+										sort |
+										uniq
+								)"
 						fi
-						echo "[-P-]" \
-							"[${masked}${keyworded}]" \
-							"${cat}/${eb%".ebuild"}:${slot}"
-					done
-				done
+
+						if [[ "${pkg}" == *-[0-9]* ]]; then
+							#pv="${pkg}"
+							pkg="${pkg%"-"[0-9]*}"
+						fi
+
+						for eb in $( # <- Syntax
+								eval ls -1 "${repopath}/${cat}/${pkg}/" \
+										2>/dev/null |
+									grep -- '\.ebuild$' |
+									sort -V
+							)
+						do
+							slot='0.0'
+							masked=' '
+							keyworded=' '
+							# I - Installed
+							# P - In portage tree
+							# O - In overlay
+							if [[ -s "${repopath}/${cat}/${pkg}/${eb}" ]]; then
+								# Some SLOT definitions reference other
+								# variables, such as LLVM_MAJOR :(
+								export LLVM_MAJOR=0
+								eval "$( # <- Syntax
+										grep 'SLOT=' \
+											"${repopath}/${cat}/${pkg}/${eb}"
+									)"
+								unset LLVM_MAJOR
+								slot="${SLOT:-"${slot}"}"
+								if grep -Eq -- "~${arch}([^-]|$)" \
+										"${repopath}/${cat}/${pkg}/${eb}"
+								then
+									keyworded='~'
+								fi
+							fi
+							echo "[-P-]" \
+								"[${masked}${keyworded}]" \
+								"${cat}/${eb%".ebuild"}:${slot}"
+						done  # for eb in $( ... )
+					done  # for repopath in ${repopaths}
+				done  # for arg in "${@:-}"
 			}  # equery
 		fi
 		export -f equery
@@ -914,8 +940,8 @@ _docker_resolve() {
 	fi
 
 	if [[ -d /etc/portage ]]; then
-		# Ensure that ebuilds keyworded for building are checked when confirming
-		# the package to build...
+		# Ensure that ebuilds keyworded for building are checked when
+		# confirming the package to build...
 		sudo mkdir -p /etc/portage/package.accept_keywords 2>/dev/null || :
 		if ! [[ -d /etc/portage/package.accept_keywords ]]; then
 			die "'/etc/portage/package.accept_keywords' must be a directory"
@@ -964,12 +990,12 @@ _docker_resolve() {
 					bash -c 'printf "%s\n" "$( versionsort "${@:-}" )"' _ {} |
 				tail -n 1
 		)" || :
-	if [[ -n "${TMP_KEYWORDS:-}" ]] && [[ -e "${TMP_KEYWORDS}" ]]; then
+	if [[ -n "${TMP_KEYWORDS:-}" && -e "${TMP_KEYWORDS}" ]]; then
 		sudo rm "${TMP_KEYWORDS}"
 		trap - SIGHUP SIGINT SIGQUIT
 		unset TMP_KEYWORDS
 	fi
-	if [[ -z "${dr_name:-}" ]] || [[ -z "${dr_package:-}" ]]; then
+	if [[ -z "${dr_name:-}" || -z "${dr_package:-}" ]]; then
 		warn "Failed to match portage atom to package name" \
 			"'${1:-"${package}"}'"
 		return 1
@@ -1041,14 +1067,14 @@ _docker_image_exists() {
 _docker_run() {
 	#inherit name container_name BUILD_CONTAINER
 	#inherit NO_BUILD_MOUNTS NO_CPU_LIMITS NO_LOAD_LIMITS NO_MEMORY_LIMITS \
-	#	NO_REPO_MASKS
+	#   NO_REPO_MASKS
 	#inherit DOCKER_VARS
 	#inherit PODMAN_MEMORY_RESERVATION PODMAN_MEMORY_LIMIT PODMAN_SWAP_LIMIT
-	#inherit ACCEPT_KEYWORDS ACCEPT_LICENSE DEBUG DEV_MODE DOCKER_CMD_VARS \
-	#	DOCKER_DEVICES DOCKER_ENTRYPOINT DOCKER_EXTRA_MOUNTS \
-	#	DOCKER_HOSTNAME DOCKER_INTERACTIVE DOCKER_PRIVILEGED \
-	#	DOCKER_VOLUMES ECLASS_OVERRIDE EMERGE_OPTS FEATURES INSTALL_MASK \
-	#	PYTHON_SINGLE_TARGET PYTHON_TARGETS ROOT TERM TRACE USE
+	#inherit ACCEPT_KEYWORDS ACCEPT_LICENSE DEBUG DEV_MODE DOCKER_CAPS \
+	#   DOCKER_CMD_VARS DOCKER_DEVICES DOCKER_ENTRYPOINT DOCKER_EXTRA_MOUNTS \
+	#   DOCKER_HOSTNAME DOCKER_INTERACTIVE DOCKER_PRIVILEGED \
+	#   DOCKER_VOLUMES ECLASS_OVERRIDE EMERGE_OPTS FEATURES INSTALL_MASK \
+	#   PYTHON_SINGLE_TARGET PYTHON_TARGETS ROOT TERM TRACE USE
 	#inherit ARCH PKGDIR_OVERRIDE PKGDIR
 	#inherit DOCKER_VERBOSE DOCKER_CMD
 	#inherit image IMAGE
@@ -1075,7 +1101,7 @@ _docker_run() {
 
 	[[ -n "${name:-}" ]] || dr_rm='--rm'
 
-	if [[ -z "${name:-}" ]] && [[ -z "${container_name:-}" ]]; then
+	if [[ -z "${name:-}" && -z "${container_name:-}" ]]; then
 		error "One of 'name' or 'container_name' must be set"
 		return 1
 	fi
@@ -1094,17 +1120,6 @@ _docker_run() {
 		docker ${DOCKER_VARS:-} container rm --volumes \
 				"${name:-"${container_name}"}" >/dev/null
 	trap - INT
-
-	# FIXME: Make this package-specific hack generic (or unneeded!)
-	if [[ -n "${BUILD_CONTAINER:-}" ]] && [[ -z "${NO_BUILD_MOUNTS:-}" ]]; then
-		if [[ -d '/etc/openldap/schema' ]] &&
-				[[ -n "${name:-}" ]] &&
-				[[ "${name%"-"*}" == 'buildsvc' ]]
-		then
-			DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+"${DOCKER_EXTRA_MOUNTS} "}"
-			DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS}--mount type=bind,source=/etc/openldap/schema/,destination=/service/etc/openldap/schema"
-		fi
-	fi
 
 	# --privileged is required for portage sandboxing... or alternatively
 	# execute 'emerge' with:
@@ -1153,7 +1168,8 @@ _docker_run() {
 		  ${dr_rm:+"--rm"}
 		--ulimit nofile=1024:1024
 	)
-	if [[ -n "${BUILD_CONTAINER:-}" ]] && [[ -z "${NO_BUILD_MOUNTS:-}" ]]; then
+
+	if [[ -n "${BUILD_CONTAINER:-}" && -z "${NO_BUILD_MOUNTS:-}" ]]; then
 		# We have build-mounts, therefore assume that we're running a
 		# build container...
 		runargs+=(
@@ -1165,6 +1181,7 @@ _docker_run() {
 		FEATURES="${FEATURES}-ipc-sandbox -mount-sandbox -network-sandbox"
 		export FEATURES
 	fi
+
 	if [[ -n "${DEV_MODE:-}" ]]; then
 		if
 			[[
@@ -1241,7 +1258,27 @@ _docker_run() {
 			--volume "${dev_mode_script_dir}/entrypoint.sh${ext}:/usr/libexec/entrypoint.sh:ro"
 		)
 		unset dev_mode_script_dir ext
-	fi
+	fi  # [[ -n "${DEV_MODE:-}" ]]
+
+	if [[ -n "${DOCKER_CAPS:-}" ]]; then
+		local arg='' caps=''
+
+		for arg in ${DOCKER_CAPS}; do
+			case "${arg:-}" in
+				--cap-add=[A-Z]*)
+					caps="${caps:+"${caps} "}${arg}" ;;
+				[A-Z]*)
+					caps="${caps:+"${caps} "}--cap-add=${arg}" ;;
+				'')
+					: ;;
+				*)
+					warn "Skipping unrecognised capability '${arg}'" ;;
+			esac
+		done
+		DOCKER_CAPS="${caps:-}"
+
+		unset caps arg
+	fi  # [[ -n "${DOCKER_CAPS:-}" ]]
 
 	if [[ -n "${USE:-}" ]]; then
 		USE="$( echo "${USE}" | xargs -r )"
@@ -1280,14 +1317,17 @@ _docker_run() {
 		  $( add_arg DOCKER_PRIVILEGED --privileged )
 		  ${DOCKER_EXTRA_MOUNTS:-}
 		  ${DOCKER_VOLUMES:-}
+		  ${DOCKER_CAPS:-}
 		  $( add_arg DOCKER_HOSTNAME --hostname "${DOCKER_HOSTNAME:-}" )
 	)
+
 	if [[ -n "${DOCKER_CMD_VARS:-}" ]]; then
 		# shellcheck disable=SC2206
 		runargs+=( ${DOCKER_CMD_VARS} )
 	elif [[ -n "${docker_cmd_vars[*]:-}" ]]; then
 		runargs+=( "${docker_cmd_vars[@]:-}" )
 	fi
+
 	if [[ -z "${NO_MEMORY_LIMITS:-}" ]]; then
 		if [[ -r /proc/cgroups ]] &&
 				grep -q -- '^memory.*\s1$' /proc/cgroups &&
@@ -1396,7 +1436,8 @@ _docker_run() {
 			print "Using memory limits:" \
 				"${PODMAN_MEMORY_RESERVATION}/${PODMAN_MEMORY_LIMIT}/${PODMAN_SWAP_LIMIT}"
 		fi
-	fi
+	fi  # [[ -z "${NO_MEMORY_LIMITS:-}" ]]
+
 	if [[ -z "${NO_BUILD_MOUNTS:-}" ]]; then
 		local -a mirrormountpoints=()
 		local -a mirrormountpointsro=()
@@ -1404,8 +1445,31 @@ _docker_run() {
 		local -A mountpointsro=()
 		local -i skipped=0
 		local mp='' src=''  # cwd=''
+		local ro="${docker_readonly:+",${docker_readonly}"}"
 		local default_repo_path=''
 		local default_distdir_path='' default_pkgdir_path=''
+
+		# This should no longer be needed: a container-services/openldap
+		# package can install be used to install extracted schema to
+		# /etc/openldap/schema where required.
+		#
+		#if [[ -n "${BUILD_CONTAINER:-}" ]]; then
+		#	if [[ -d '/etc/openldap/schema' ]] &&
+		#			[[ -n "${name:-}" ]] &&
+		#			[[ "${name%"-"*}" == 'buildsvc' ]]
+		#	then
+		#		src='/etc/openldap/schema/'
+		#		mp='/service/etc/openldap/schema'
+		#		runargs+=( --mount "type=bind,source=${src},destination=${mp}${ro}" )
+		#		mp='' src=''
+		#	fi
+		#fi
+
+		if [[ -n "${BUILD_CONTAINER:-}" ]]; then
+			# We have build-mounts, therefore assume that we're running a
+			# build container...
+			runargs+=( --privileged )
+		fi
 
 		# If 'portageq' is not available, then ensure that all of the variables
 		# referenced immediately prior are set so that it then never needs to
@@ -1419,6 +1483,34 @@ _docker_run() {
 			if [[ ! -d /var/db/repos/gentoo ]] && [[ -d /var/db/repo/gentoo ]]
 			then
 				default_repo_path='/var/db/repo/gentoo /var/db/repo/srcshelton'
+			fi
+
+			if [[ -s "${EROOT:-}"/etc/portage/repos.conf/srcshelton.conf ]]
+			then
+				# /var/lib/portage/eclass/linux-info is used by the
+				# ::srcshelton repo to record kernel configuration
+				# dependencies, but will not exist until the first package
+				# which sets CONFIG_CHECK and inherits linux-info.eclass is
+				# merged onto the hosts system - so let's create this directory
+				# pre-emptively so that any package built (but potentially only
+				# as a build-dependency) is also able to persistently record
+				# its requirements.
+				#
+				# (Due to the lack of portageq, we'll assume that this repo has
+				#  the linux-info.eclass override, rather than laboriously
+				#  constructing the path to the from the conf file to verify)
+				#
+				sudo mkdir -p /var/lib/portage/eclass/linux-info
+				sudo touch -a /var/lib/portage/eclass/linux-info/.keep
+			fi
+		else
+			if [[ "$( portageq get_repos "${EROOT:-"/"}" )" == *srcshelton* ]] &&
+				[[ -s "$( portageq get_repo_path "${EROOT:-"/"}" srcshelton )"/eclass/linux-info.eclass ]]
+			then
+				# See above.
+				#
+				sudo mkdir -p /var/lib/portage/eclass/linux-info
+				sudo touch -a /var/lib/portage/eclass/linux-info/.keep
 			fi
 		fi
 		if [[ -n "${PKGDIR_OVERRIDE:-}" ]]; then
@@ -1442,7 +1534,7 @@ _docker_run() {
 		)
 
 		# N.B.: Read repo-specific masks from the host system...
-		if [[ -z "${NO_REPO_MASKS:-}" ]] && [[ -d /etc/portage/package.mask ]]
+		if [[ -z "${NO_REPO_MASKS:-}" && -d /etc/portage/package.mask ]]
 		then
 			while read -r mp; do
 				mirrormountpointsro+=( "${mp}" )
@@ -1514,7 +1606,7 @@ _docker_run() {
 					: $(( skipped = skipped + 1 ))
 					continue
 				fi
-				runargs+=( --mount "type=bind,source=${src},destination=${mp}${docker_readonly:+",${docker_readonly}"}" )
+				runargs+=( --mount "type=bind,source=${src},destination=${mp}${ro}" )
 			done
 		done
 		for mps in ${mirrormountpoints[@]+"${mirrormountpoints[@]}"}; do
@@ -1549,7 +1641,7 @@ _docker_run() {
 					: $(( skipped = skipped + 1 ))
 					continue
 				fi
-				runargs+=( --mount "type=bind,source=${src},destination=${mountpointsro[${mp}]}${docker_readonly:+",${docker_readonly}"}" )
+				runargs+=( --mount "type=bind,source=${src},destination=${mountpointsro[${mp}]}${ro}" )
 			done
 		done
 		for mps in ${mountpoints[@]+"${!mountpoints[@]}"}; do
@@ -1594,6 +1686,13 @@ _docker_run() {
 		fi
 
 		unset src mps mp
+	fi  # [[ -z "${NO_BUILD_MOUNTS:-}" ]]
+
+	if [[ "${runargs[*]}" != *--privileged* ]]; then
+		# This shouldn't cause much harm, regardless...
+		FEATURES="${FEATURES:+"${FEATURES} "}"
+		FEATURES="${FEATURES}-ipc-sandbox -mount-sandbox -network-sandbox"
+		export FEATURES
 	fi
 
 	if [[ -n "${DOCKER_VERBOSE:-}" ]]; then
@@ -1626,7 +1725,7 @@ _docker_run() {
 		done | column -t -s $'\t'
 		unset next arg
 		output
-	fi
+	fi  # [[ -n "${DOCKER_VERBOSE:-}" ]]
 
 	(
 		[[ -n "${DOCKER_CMD:-}" ]] && set -- "${DOCKER_CMD}"
@@ -1703,6 +1802,7 @@ _docker_run() {
 			"${image}" ${@+"${@}"}
 	)
 	rc=${?}
+
 	# shellcheck disable=SC2031,SC2086
 	if
 		dr_id="$( # <- Syntax
@@ -1721,7 +1821,7 @@ _docker_run() {
 			:
 	fi
 
-	if [[ -n "${rcc:-}" ]] && [[ "${rc}" -ne "${rcc}" ]]; then
+	if [[ -n "${rcc:-}" && "${rc}" -ne "${rcc}" ]]; then
 		if [[ "${rc}" -gt "${rcc}" ]]; then
 			warn "Return code (${rc}) differs from container exit code" \
 				"(${rcc}) - proceeding with former ..."
