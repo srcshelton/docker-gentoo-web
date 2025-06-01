@@ -170,8 +170,8 @@ export -f output die error warn note info print
 # replacement...
 #
 sudo() {
-	"${@:-}" ||
-		"$( type -pf "${0}" )" "${@:-}"
+	"${@:-}" 2>/dev/null ||
+		"$( type -pf "${FUNCNAME[0]}" )" "${@:-}"
 }  # sudo
 
 replace_flags() {
@@ -260,7 +260,7 @@ replace_flags() {
 			esac
 		done
 
-		# ... and then add '(-)flag' to the start or end of the list
+		# ... and then add '(-)flag' to the start or end of the list
 		#
 		case "${flag}" in
 			'')
@@ -450,6 +450,10 @@ if [[ "$( uname -s )" == 'Darwin' ]]; then
 	# binaries...
 	#
 	readlink() {
+		if ! [[ "${1:-}" == '-e' ]]; then
+			warn "readlink called with unsupported mode '${1:-}'"
+			return 1
+		fi
 		if type -pf realpath >/dev/null 2>&1; then
 			realpath "${2}" 2>/dev/null
 		else
@@ -657,7 +661,7 @@ _docker_resolve() {
 		# that an appropriate image will exist, and even then the container has
 		# to have run in order to use '--volumes-from', and that means
 		# executing at least a placeholder binary ('/bin/sh -c /bin/true') from
-		# a 'linux/amd64' image.
+		# a 'linux/amd64' image.
 		#
 		# Without a linkage between this repo and the custom overlay repo, we
 		# can only find the appropriate tag for this image from the latest
@@ -834,10 +838,12 @@ _docker_resolve() {
 								cut -d'=' -f 2- |
 								awk '{print $NF}'
 						)"
-				elif [[ -d /var/db/repos ]]; then
-					repopaths='/var/db/repos/gentoo'
-				elif [[ -d /var/db/repo ]]; then
-					repopaths='/var/db/repo/gentoo'
+				elif [[ -d /var/db/repos/gentoo || -L /var/db/repos/gentoo ]]
+				then
+					repopaths="$( readlink -e '/var/db/repos/gentoo' )"
+				elif [[ -d /var/db/repo/gentoo || -L /var/db/repo/gentoo ]]
+				then
+					repopaths="$( readlink -e '/var/db/repo/gentoo' )"
 				else
 					die "Unable to locate 'gentoo' repo directory"
 				fi
@@ -893,12 +899,13 @@ _docker_resolve() {
 							if [[ -s "${repopath}/${cat}/${pkg}/${eb}" ]]; then
 								# Some SLOT definitions reference other
 								# variables, such as LLVM_MAJOR :(
-								export LLVM_MAJOR=0
+								export LLVM_MAJOR=0 PV=0
+								export LLVM_SOABI="${LLVM_MAJOR}"
 								eval "$( # <- Syntax
 										grep 'SLOT=' \
 											"${repopath}/${cat}/${pkg}/${eb}"
-									)"
-								unset LLVM_MAJOR
+									)" 2>/dev/null
+								unset LLVM_SOABI PV LLVM_MAJOR
 								slot="${SLOT:-"${slot}"}"
 								if grep -Eq -- "~${arch}([^-]|$)" \
 										"${repopath}/${cat}/${pkg}/${eb}"
@@ -1084,7 +1091,7 @@ _docker_run() {
 				sed 's/ <- $//'
 		)'"
 
-	local dr_rm='' dr_id=''
+	local dr_rm='' dr_id='' portage_log_dir=''
 	local -i rc=0
 	local -i rcc=0
 
@@ -1154,6 +1161,14 @@ _docker_run() {
 							docker info 2>&1 |
 								grep -q -- 'cpuset'
 					then
+						# Pending a cleverer heuristic (... given *strange* CPU
+						# configurations such as are found on the Radxa Orion
+						# O6, or even more conventional big.LITTLE designs),
+						# let's avoid the first CPU (0), on the basis that this
+						# may have boot/tick/irq responsibillities...
+						#
+						# N.B. CPUs are indexed from 0 to `nproc`-1
+						#
 						echo "--cpuset-cpus 1-$(( $( nproc ) - 1 ))"
 					fi
 				fi
@@ -1252,6 +1267,9 @@ _docker_run() {
 				else
 					echo "--env DEFAULT_MAXLOAD=0.00"
 					echo "--env MAXLOAD=0.00"
+				fi
+				if [[ "${ext:-}" == '.build' ]]; then
+					echo "--env log_dir=${log_dir:-}"
 				fi
 			  )
 			--env environment_file="${environment_file}"
@@ -1480,12 +1498,25 @@ _docker_run() {
 			default_repo_path='/var/db/repos/gentoo /var/db/repos/srcshelton'
 			default_distdir_path='/var/cache/portage/dist'
 			default_pkgdir_path="/var/cache/portage/pkg/${ARCH:-"${arch}"}/${PKGHOST:-"docker"}"
-			if [[ ! -d /var/db/repos/gentoo ]] && [[ -d /var/db/repo/gentoo ]]
+			if ! [[ -d /var/db/repos/gentoo || -L /var/db/repos/gentoo ]] &&
+					[[ -d /var/db/repo/gentoo || -L /var/db/repo/gentoo ]]
 			then
-				default_repo_path='/var/db/repo/gentoo /var/db/repo/srcshelton'
+				default_repo_path="$( # <- Syntax
+						readlink -e '/var/db/repo/gentoo'
+					) $( # <- Syntax
+						readlink -e '/var/db/repo/srcshelton'
+					)"
 			fi
 
-			if [[ -s "${EROOT:-}"/etc/portage/repos.conf/srcshelton.conf ]]
+			if [[ -s "${EROOT:-}"/etc/portage/repos.conf/srcshelton.conf ]] ||
+					[[ "$( type -pf portageq 2>/dev/null )" == *portageq &&
+							"$( # <- Syntax
+									portageq get_repos "${EROOT:-"/"}"
+								)" == *srcshelton* && -s "$( # <- Syntax
+									portageq get_repo_path "${EROOT:-"/"}" \
+										srcshelton
+								)"/eclass/linux-info.eclass
+						]]
 			then
 				# /var/lib/portage/eclass/linux-info is used by the
 				# ::srcshelton repo to record kernel configuration
@@ -1496,21 +1527,16 @@ _docker_run() {
 				# as a build-dependency) is also able to persistently record
 				# its requirements.
 				#
-				# (Due to the lack of portageq, we'll assume that this repo has
-				#  the linux-info.eclass override, rather than laboriously
-				#  constructing the path to the from the conf file to verify)
+				# (Due to the potential lack of portageq, we'll assume that
+				#  this repo has the linux-info.eclass override, rather than
+				#  laboriously constructing the path to the from the conf file
+				#  to verify manually...)
 				#
 				sudo mkdir -p /var/lib/portage/eclass/linux-info
-				sudo touch -a /var/lib/portage/eclass/linux-info/.keep
-			fi
-		else
-			if [[ "$( portageq get_repos "${EROOT:-"/"}" )" == *srcshelton* ]] &&
-				[[ -s "$( portageq get_repo_path "${EROOT:-"/"}" srcshelton )"/eclass/linux-info.eclass ]]
-			then
-				# See above.
-				#
-				sudo mkdir -p /var/lib/portage/eclass/linux-info
-				sudo touch -a /var/lib/portage/eclass/linux-info/.keep
+				sudo chown "${EUID:-"$( id -u )"}:root" \
+					/var/lib/portage/eclass/linux-info
+				sudo chmod ug+rwX /var/lib/portage/eclass/linux-info
+				touch -a /var/lib/portage/eclass/linux-info/.keep
 			fi
 		fi
 		if [[ -n "${PKGDIR_OVERRIDE:-}" ]]; then
@@ -1549,11 +1575,17 @@ _docker_run() {
 		fi
 
 		if [[ -n "${BUILD_CONTAINER:-}" ]]; then
+			portage_log_dir="${PORTAGE_LOGDIR:-"${PORT_LOGDIR:-"$( # <- Syntax
+					emerge --info 2>&1 |
+						grep -E -- '^PORT(AGE)?_LOGDIR=' |
+						head -n 1 |
+						cut -d'"' -f 2
+				)"}"}"
 			mirrormountpoints=(
 				#/var/cache/portage/dist
 				"${default_distdir_path:-"$( portageq distdir )"}"
 				'/etc/portage/savedconfig'
-				'/var/log/portage'
+				"${portage_log_dir:-"/var/log/portage"}"
 			)
 
 			if [[ -z "${arch:-}" ]]; then
@@ -1575,13 +1607,15 @@ _docker_run() {
 		# FIXME: crun errors when rootless due to lack of write support into
 		#        /etc/portage...
 		if [[ -s "gentoo-base/etc/portage/package.accept_keywords.${ARCH:-"${arch}"}" ]]; then
-			if [[ -w /etc/portage/package.accept_keywords ]]; then
+			if [[ -w /etc/portage/package.accept_keywords && ! -e "/etc/portage/package.accept_keywords.${ARCH:-"${arch}"}" ]]; then
 				mountpointsro["${PWD%"/"}/gentoo-base/etc/portage/package.accept_keywords.${ARCH:-"${arch}"}"]="/etc/portage/package.accept_keywords/${ARCH:-"${arch}"}"
 			else
 				warn "Cannot mount" \
 					"'${PWD%"/"}/gentoo-base/etc/portage/package.accept_keywords.${ARCH:-"${arch}"}'" \
 					"due to lack of write permission for '$( id -nu )' on" \
-					"'/etc/portage/package.accept_keywords'"
+					"'/etc/portage/package.accept_keywords', or" \
+					"'/etc/portage/package.accept_keywords.${ARCH:-"${arch}"}'" \
+					"already exists (due to another running container?)"
 			fi
 		fi
 
@@ -1752,7 +1786,7 @@ _docker_run() {
 		image="${image:-"${IMAGE:-"gentoo-build:latest"}"}"
 
 		if (( debug )); then
-			local arg=''
+			local arg='' bn=''
 			print "Starting ${BUILD_CONTAINER:+"build"} container with" \
 				"command '${_command} container run \\"
 			for arg in "${runargs[@]}"; do
@@ -1772,27 +1806,42 @@ _docker_run() {
 			done
 			print "'"
 			unset arg
-			if touch common.run.sh.debug.log; then
-				cat > common.run.sh.debug.log <<-EOF
+
+			# N.B. "${0}" is the calling script, *not* run.sh!
+			bn="$( basename "${0}" )"
+			if mkdir -p "${log_dir:="$( # <- Syntax
+							dirname "$( # <- Syntax
+								readlink -e "${0}"
+							)"
+						)/log"}" &&
+					touch "${log_dir}/debug.common.${bn}.log"
+			then
+				cat > "${log_dir}/debug.common.${bn}.log" <<-EOF
 					#! /bin/sh
 
 					set -eux
 
 				EOF
-				echo >> common.run.sh.debug.log "${_command} container run \\"
+				echo >> "${log_dir}/debug.common.${bn}.log" \
+					"${_command} container run \\"
 				for arg in "${runargs[@]}"; do
-					echo >>common.run.sh.debug.log "        '${arg}' \\"
+					echo >> "${log_dir}/debug.common.${bn}.log" \
+						"        '${arg}' \\"
 				done
-				echo >> common.run.sh.debug.log "    '${image}' \\"
+				echo >> "${log_dir}/debug.common.${bn}.log" \
+					"    '${image}' \\"
 				# Start at $1 as $0 is the command itself...
 				local -i i=1
 				for (( ; i < ${#} ; i++ )); do
-					echo >> common.run.sh.debug.log "        '${!i}' \\"
+					echo >> "${log_dir}/debug.common.${bn}.log" \
+						"        '${!i}' \\"
 				done
 				# At this point i == ${#}...
-				echo >> common.run.sh.debug.log "        '${!i}'"
+				echo >> "${log_dir}/debug.common.${bn}.log" \
+					"        '${!i}'"
 				unset i
 			fi
+			unset bn
 		fi
 		# shellcheck disable=SC2086
 		docker \
