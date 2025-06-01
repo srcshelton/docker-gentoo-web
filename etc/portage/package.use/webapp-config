@@ -57,7 +57,7 @@ net-libs/c-client						 ssl
 # required by dev-util/cmake
 net-misc/curl							 ssl curl_ssl_openssl
 
-virtual/mta								-* no-mta
+virtual/mta								-* -ssmtp no-mta
 #mail-mta/nullmailer					-ssl
 # required by dev-lang/php-7.4.16
 # required by mail-mta/nullmailer-2.2-r1
