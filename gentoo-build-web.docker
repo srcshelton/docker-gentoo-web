@@ -15,6 +15,8 @@ cd "$( dirname "$( readlink -e "${0}" )" )" || exit 1
 #
 #declare build_name=''
 #declare base_dir=''
+#declare log_dir=''
+
 # shellcheck disable=SC2034 # Set from common/vars.sh
 #declare use_essential=''
 #declare _command='docker'
@@ -66,7 +68,8 @@ if [ $(( $# )) -gt 1 ] || echo " ${*:-} " | grep -Eq -- ' -(h|-help) '; then
 	output >&2 "Usage: $( basename "${0}" ) [--force]"
 	output >&2
 	output >&2 "Options:"
-	output >&2 "        --force : Always rebuild '${package_name}:${package_version}' root image"
+	output >&2 "        --force : Always rebuild" \
+		"'${package_name}:${package_version}' root image"
 	output >&2
 	exit 0
 fi
@@ -79,10 +82,12 @@ else
 fi
 
 if [ -z "${package_name:-}" ]; then
-	die "Cannot extract package name from service name '${service}' (${package})"
+	die "Cannot extract package name from service name '${service}'" \
+		"(${package})"
 fi
 if [ -z "${package_version:-}" ]; then
-	die "Cannot extract package version from service name '${service}' (${package})"
+	die "Cannot extract package version from service name '${service}'" \
+		"(${package})"
 fi
 
 
@@ -106,7 +111,13 @@ print "Building for php version '${php_target}'"
 print "Building for python version '${python_target}'"
 
 declare php_targets=''
-php_targets="$( for t in $( portageq envvar PHP_TARGETS ); do echo "php_targets_${t}"; done | sort -V | head -n 1 )"
+php_targets="$( # <- Syntax
+		for t in $( portageq envvar PHP_TARGETS ); do
+				echo "php_targets_${t}"
+		done |
+			sort -V |
+			head -n 1
+	)"
 print "Building for PHP version(s) '${php_targets}'"
 unset php_targets
 
@@ -137,7 +148,8 @@ post_use="$( replace_flags 'lib-only' -- "${post_use[@]:-}" )"
 container_cmd='/bin/true'
 
 if ! [ -s content/webapps.conf ]; then
-	warn "file 'content/webapps.conf' not found - only static content will be served"
+	warn "file 'content/webapps.conf' not found - only static content will" \
+		"be served"
 	sleep 5
 else
 	declare webapp_pkgs=''
@@ -152,7 +164,8 @@ else
 	)"
 
 	if [ -z "${webapp_pkgs:-}" ]; then
-		warn "file 'content/webapps.conf' defines no webapps - only static content will be served"
+		warn "file 'content/webapps.conf' defines no webapps - only static" \
+			"content will be served"
 		sleep 5
 	else
 		print "Adding webapp packages '${webapp_pkgs:-}'"
@@ -191,7 +204,8 @@ if \
 				'%base%/etc/portage/package.accept_keywords'
 			) )
 then
-	note "No 'package.accept_keywords' override found in '${PWD}/${base_dir:+"${base_dir}/"}etc/portage/'"
+	note "No 'package.accept_keywords' override found in" \
+		"'${PWD}/${base_dir:+"${base_dir}/"}etc/portage/'"
 fi
 [[ -z "${arch:-}" ]] || docker_extra_mounts+=( $( add_mount --print \
 		"%base%/etc/portage/package.accept_keywords.${arch}"
@@ -203,7 +217,8 @@ if ! docker_extra_mounts+=( $( add_mount --print \
 			'%base%/etc/portage/package.license'
 		) )
 then
-	note "No 'package.license' override found in '${PWD}/${base_dir:+"${base_dir}/"}etc/portage/'"
+	note "No 'package.license' override found in" \
+		"'${PWD}/${base_dir:+"${base_dir}/"}etc/portage/'"
 fi
 
 # package.unmask
@@ -222,7 +237,8 @@ if \
 				'%base%/etc/portage/package.unmask'
 			) )
 then
-	note "No 'package.unmask' override found in '${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.unmask/'"
+	note "No 'package.unmask' override found in" \
+		"'${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.unmask/'"
 fi
 [[ -z "${arch:-}" ]] || docker_extra_mounts+=( $( add_mount --print \
 		"%base%/etc/portage/package.unmask.${arch}" \
@@ -245,7 +261,8 @@ if \
 				'%base%/etc/portage/package.mask'
 			) )
 then
-	note "No 'package.mask' override found in '${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.mask/'"
+	note "No 'package.mask' override found in" \
+		"'${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.mask/'"
 fi
 [[ -z "${arch:-}" ]] || docker_extra_mounts+=( $( add_mount --print \
 		"%base%/etc/portage/package.mask.${arch}" \
@@ -264,7 +281,8 @@ if \
 				'%base%/etc/portage/package.use'
 			) )
 then
-	note "No 'package.use' override found in '${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.use/'"
+	note "No 'package.use' override found in" \
+		"'${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.use/'"
 fi
 
 # python_targets
@@ -284,31 +302,48 @@ DOCKER_EXTRA_MOUNTS="${docker_extra_mounts[*]:-}"
 #done
 while IFS= read -r -d '' webappdir; do
 	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+"${DOCKER_EXTRA_MOUNTS} "}--mount type=bind,source=${webappdir}/,destination=${webappdir}/"
-done < <( find /var/www/localhost/htdocs/ -mindepth 2 -maxdepth 2 -type d -print0 )
+done < <(
+		find /var/www/localhost/htdocs/ -mindepth 2 -maxdepth 2 -type d -print0
+	)
 unset webappdir
 export DOCKER_EXTRA_MOUNTS
 
-images="$( docker image list --noheading "${container_prefix}-${package_name}:${package_version}" 2>&1 )"
-if echo "${images:-}" | grep -q -- "${container_prefix}-${package_name}\s\+${package_version}\s" &&
-	! echo " ${*:-} " | grep -Eq -- ' -(f|-force) '
+mkdir -p "${log_dir:="../log"}" ||
+	die "Could not create log directory '${log_dir}': ${?}"
+
+images="$( # <- Syntax
+		docker image list --noheading \
+			"${container_prefix}-${package_name}:${package_version}" 2>&1
+	)"
+if echo "${images:-}" |
+		grep -q -- \
+			"${container_prefix}-${package_name}\s\+${package_version}\s" &&
+		! echo " ${*:-} " | grep -Eq -- ' -(f|-force) '
 then
 	output >&2
 	# shellcheck disable=SC2154
-	output >&2 " ${blue}*${reset} Re-using existing '${package_name}:${package_version}' root image ..."
+	output >&2 " ${blue}*${reset} Re-using existing" \
+		"'${package_name}:${package_version}' root image ..."
 else
 	output >&2
 	# shellcheck disable=SC2154
-	output >&2 " ${blue}*${reset} Building '${package_name}:${package_version}' root image ..."
+	output >&2 " ${blue}*${reset} Building" \
+		"'${package_name}:${package_version}' root image ..."
 	output >&2
 
 	trap '' INT
-	docker container stop "${container_prefix}-${container_name}" 2>/dev/null || :
-	docker container rm --volumes "${container_prefix}-${container_name}" 2>/dev/null || :
+	docker container stop "${container_prefix}-${container_name}" \
+		>/dev/null 2>&1 || :
+	docker container rm --volumes "${container_prefix}-${container_name}" \
+		>/dev/null 2>&1 || :
 	trap - INT
 
-	build_use="$( replace_flags 'lib-only' -- "${USE:-}" )"
+	# We're seeing virutal/mta get USE='no-mta ssmtp' with '-* no-mta' in
+	# files :(
+	build_use="$( replace_flags 'lib-only' '-ssmtp' -- "${USE:-}" )"
 
-	# shellcheck disable=SC2086 # We don't want a null argument if there are no ${extra_pkgs} items
+	# We don't want a null argument if there are no ${extra_pkgs} items
+	# shellcheck disable=SC2086
 	USE="${build_use:-}" \
 	ROOT="/" \
 	name="${container_prefix}-${container_name}" \
@@ -323,8 +358,8 @@ else
 				--usepkg=y \
 				--with-bdeps=n \
 				--with-bdeps-auto=n \
-			"=${package}${repo:+"::${repo}"}" ${extra_pkgs:-} \
-		2>&1 | tee ../log/"docker.${container_prefix}-${container_name}.log"
+			"=${package}${repo:+"::${repo}"}" ${extra_pkgs:-} 2>&1 |
+		tee "${log_dir}/${container_prefix}.${container_name}.log"
 	rc=${?}
 	output " -> ${rc}"
 
@@ -335,14 +370,14 @@ else
 	if ! command -v buildah >/dev/null 2>&1; then
 		docker container commit \
 				"${container_prefix}-${container_name}" \
-				"${container_prefix}-${package_name}:${package_version}" \
-			2>&1 | tee -a ../log/"docker.${container_prefix}-${container_name}.log"
+				"${container_prefix}-${package_name}:${package_version}" 2>&1 |
+			tee -a "${log_dir}/${container_prefix}.${container_name}.log"
 	else
 		buildah commit \
 					--squash \
 				"${container_prefix}-${container_name}" \
-				"${container_prefix}-${package_name}:${package_version}" \
-			2>&1 | tee -a ../log/"docker.${container_prefix}-${container_name}.log"
+				"${container_prefix}-${package_name}:${package_version}" 2>&1 |
+			tee -a "${log_dir}/${container_prefix}.${container_name}.log"
 	fi
 	rc=${?}
 	trap - INT
@@ -353,11 +388,13 @@ fi
 unset images
 
 trap '' INT
-docker container rm --volumes "${container_prefix}-${container_name}" 2>/dev/null || :
+docker container rm --volumes "${container_prefix}-${container_name}" \
+	>/dev/null 2>&1 || :
 trap - INT
 
 output >&2
-output >&2 " ${blue}*${reset} Building ${package_name}:${package_version} (${container_cmd}) service image ..."
+output >&2 " ${blue}*${reset} Building ${package_name}:${package_version}" \
+	"(${container_cmd}) service image ..."
 output >&2
 
 declare -a args=()
@@ -366,13 +403,21 @@ args+=(
 	--build-arg environment_filter="${environment_filter}"
 	--build-arg image_name="${container_prefix}-${package_name}"
 	--build-arg service_cmd="${container_cmd}"
-	  #$( [[ -n "${container_cwd:-}" ]] && echo '--build-arg' "service_cwd=${container_cwd}" )
-	  #$( [[ -n "${fs_name:-}" ]] && echo '--build-arg' "service_fs_name=${fs_name}" )
+	  #$(
+	  #		[[ -n "${container_cwd:-}" ]] &&
+	  #			echo '--build-arg' "service_cwd=${container_cwd}"
+	  #	)
+	  #$(
+	  #		[[ -n "${fs_name:-}" ]] &&
+	  #			echo '--build-arg' "service_fs_name=${fs_name}"
+	  #	)
 	  $( add_arg container_cwd --build-arg "service_cwd=${container_cwd}" )
 	  $( add_arg fs_name --build-arg "service_fs_name=${fs_name}" )
 	--build-arg service_group="${group}"
 	--build-arg service_name="${package_name/.//}"
-	--build-arg service_name_short="$( cut -d'/' -f 2- <<<"${package_name/.//}" )"
+	--build-arg service_name_short="$( #
+			cut -d'/' -f 2- <<<"${package_name/.//}"
+		)"
 	--build-arg service_user="${user}"
 	--build-arg service_version="${package_version}"
 	--build-arg SET_TERM="${TERM}"
@@ -388,7 +433,7 @@ args+=(
 # shellcheck disable=SC2046
 docker $( add_arg IMAGE_ROOT --storage-opt= --root "${IMAGE_ROOT}" ) \
 		image build "${args[@]}" . 2>&1 |
-	tee ../log/"docker.web.${container_name}.log"
+	tee "${log_dir}/web.${container_name}.log"
 				#--network slirp4netns \
 				#--no-cache \
 rc=${?}
@@ -397,10 +442,13 @@ output " -> ${rc}"
 # Keep image to allow for much faster subsequent rebuilds...
 #if [ $(( ${rc:-1} )) -eq 0 ]; then
 #	trap '' INT
-#	docker image rm "${container_prefix}-${package_name}:${package_version}" 2>/dev/null || :
+#	docker image rm "${container_prefix}-${package_name}:${package_version}" \
+#		>/dev/null 2>&1 || :
 #	trap - INT
 #fi
 
 set +o xtrace
 
 exit ${rc}
+
+# vi: set colorcolumn=80:
