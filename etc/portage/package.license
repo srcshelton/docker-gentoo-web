@@ -25,6 +25,7 @@ app-crypt/rhash				 0BSD
 app-containers/netavark			 0BSD Apache-2.0-with-LLVM-exceptions BSD-2-with-patent Boost-1.0 Unicode-DFS-2016 Unlicense ZLIB
 app-containers/aardvark-dns		 0BSD Apache-2.0-with-LLVM-exceptions BSD-2-with-patent Unicode-DFS-2016 Unlicense ZLIB
 app-containers/skopeo			 CC-BY-SA-4.0
+dev-util/cargo-c			 MPL-2.0 MPL-2.0 Unicode-3.0 ZLIB
 dev-util/cargo-ebuild			 Apache-2.0-with-LLVM-exceptions Boost-1.0 MPL-2.0 Unicode-DFS-2016 Unlicense ZLIB
 #dev-libs/libbsd			 BSD-4
 #app-arch/libarchive			 BSD-4 public-domain
@@ -42,6 +43,7 @@ dev-build/gtk-doc-am			 FDL-1.1
 app-text/sgml-common			 FDL-1.1+
 dev-libs/mpc				 FDL-1.3+
 sys-devel/gcc				 FDL-1.3+
+sys-libs/gdbm				 FDL-1.3+
 sys-devel/flex				 FLEX
 sys-apps/man-pages-posix		 freedist man-pages-posix-2013
 dev-build/automake			 FSFAP
@@ -91,20 +93,27 @@ app-vim/eselect-syntax			 vim
 app-vim/gentoo-syntax			 vim
 sys-libs/zlib				 ZLIB
 
-net-nds/openldap			 OPENLDAP
+# Optional packages:
+#
 
+dev-go/golangci-lint			 MPL-2.0
+net-nds/openldap			 OPENLDAP
+sci-libs/mkl				 ISSL
 sys-apps/memtest86-bin			 PassMark-EULA
 
-# Bulid dependencies:
+# Build dependencies:
 #
+
 dev-python/sphinxcontrib-jquery		 0BSD
 
 # Documentation:
 #
+
 media-gfx/graphviz			 CPL-1.0
 
 # Gentoo stage3 image:
 #
+
 dev-lang/tcl				 Spencer-99
 
 # clang:
@@ -112,10 +121,12 @@ dev-lang/tcl				 Spencer-99
 
 llvm-core/clang				 Apache-2.0-with-LLVM-exceptions UoI-NCSA
 llvm-core/clang-common			 Apache-2.0-with-LLVM-exceptions UoI-NCSA
-llvm-core/clang-runtime			 metapackage
 llvm-core/lld				 Apache-2.0-with-LLVM-exceptions UoI-NCSA
 llvm-core/llvm				 Apache-2.0-with-LLVM-exceptions UoI-NCSA rc
 llvm-core/llvm-common			 Apache-2.0-with-LLVM-exceptions UoI-NCSA
+llvm-core/polly				 Apache-2.0-with-LLVM-exceptions UoI-NCSA
+# move llvm-core/clang-runtime llvm-runtimes/clang-runtime
+llvm-runtimes/clang-runtime		 metapackage
 llvm-runtimes/compiler-rt		 Apache-2.0-with-LLVM-exceptions
 llvm-runtimes/compiler-rt-sanitizers	 Apache-2.0-with-LLVM-exceptions
 llvm-runtimes/libcxxabi			 Apache-2.0-with-LLVM-exceptions
@@ -150,7 +161,7 @@ mail-filter/dcc				 DCC
 
 net-analyzer/netdata			 MPL-2.0 NCUL1
 
-net-misc/kea				 SSLeay
+net-misc/kea				 MPL-2.0 SSLeay
 
 sys-apps/tcp-wrappers			 tcp_wrappers_license
 
@@ -180,9 +191,10 @@ dev-php/pecl-redis			 PHP-3.01
 
 # required by services dev-lang/php & www-server/lighttpd
 dev-lang/tcl				 tcltk
+dev-libs/libgit2			 GPL-2-with-linking-exception
 dev-php/Masterminds-HTML5		 HTML5-PHP
 dev-php/pecl-imagick			 PHP-3.01
-gnome-base/librsvg			 Apache-2.0-with-LLVM-exceptions MPL-2.0 Unicode-DFS-2016
+gnome-base/librsvg			 Apache-2.0-with-LLVM-exceptions MPL-2.0 Unicode-3.0 Unicode-DFS-2016
 mail-filter/libmilter			 Sendmail
 media-gfx/imagemagick			 imagemagick
 
@@ -291,6 +303,7 @@ app-text/docbook-sgml-dtd		 docbook
 app-text/docbook-xml-simple-dtd		 docbook
 app-text/xhtml1				 W3C
 dev-python/pillow			 HPND
+sys-apps/dbus				 tcltk
 sys-apps/miscfiles			 unicode
 #sys-fs/udisks				 LGPL-2+
 sys-libs/libsmbios			 Boost-1.0 OSL-2.0

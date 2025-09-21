@@ -104,22 +104,17 @@ declare python_target=''
 # the php & python configuration for the root system and the confguration for
 # the container build environment is the same (... which is reasonable, unless
 # overridden, as they share a common portage tree and therefore base set of
-# python defaults).
-php_target="$( portageq envvar 'PHP_TARGETS' )"
+# python and php defaults).
 python_target="$( portageq envvar 'PYTHON_SINGLE_TARGET' )"
-print "Building for php version '${php_target}'"
-print "Building for python version '${python_target}'"
+print "Building for python version '${python_target:="python3_13"}'"
 
-declare php_targets=''
-php_targets="$( # <- Syntax
-		for t in $( portageq envvar PHP_TARGETS ); do
-				echo "php_targets_${t}"
-		done |
+php_target="$( # <- Syntax
+		portageq envvar PHP_TARGETS |
+			xargs -rn 1 |
 			sort -V |
 			head -n 1
 	)"
-print "Building for PHP version(s) '${php_targets}'"
-unset php_targets
+print "Building for PHP version(s) '${php_target:="${php_default_target}"}'"
 
 
 info "Setting build variables for package 'webapp-config' ..."

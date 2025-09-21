@@ -22,6 +22,7 @@ virtual/libcrypt						 static-libs
 app-eselect/eselect-php					 fpm
 dev-libs/libpcre2						 unicode
 
+dev-lang/php							-truetype
 dev-lang/php							 curl fileinfo filter fpm gd iconv intl json mysql mysqli pdo session simplexml sockets spell sqlite unicode xml xslt zip
 dev-lang/php							 bzip2 cgi exif flatfile ftp opcache sharedme sysvpic tidy tokenizer xmlreader xmlrpc xmlwriter
 
@@ -29,6 +30,12 @@ dev-lang/php							 bzip2 cgi exif flatfile ftp opcache sharedme sysvpic tidy to
 #
 www-apps/wordpress						 akismet themes
 mail-client/roundcube					 enigma mysql plugins spell sqlite ssl zxcvbn
+
+# required by dev-php/pecl-imagick
+# required by media-gfx/imagemagick[svg]
+# required by gnome-base/librsvg
+# required by x11-libs/pango
+media-libs/harfbuzz						 truetype
 
 # required by mail-client/roundcube
 dev-lang/php							 ssl
@@ -38,9 +45,6 @@ dev-lang/php							 ctype hash phar
 
 # required by dev-php/PEAR-Crypt_GPG
 dev-lang/php							 cli posix
-
-# required by dev-php/pecl-imagick
-media-gfx/imagemagick					-openmp
 
 # required by dev-lang-php[cli]
 #dev-lang/php							-libedit readline
