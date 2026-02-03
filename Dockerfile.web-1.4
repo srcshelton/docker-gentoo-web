@@ -1,0 +1,434 @@
+# syntax=docker/dockerfile:1.4
+
+# service:
+#   Extract a ROOT-installed service.
+
+# hadolint global ignore=DL4006,DL3025,SC3040,SC2174,SC2015,SC2012
+#
+
+# This is a hack to enable xtrace output for container-builds, intending to be
+# the least invasive (albeit Docker-oriented) means to control this feature...
+ARG BUILDKIT_PROGRESS
+
+ARG image_name
+ARG service_name
+ARG service_name_short="web-content"
+ARG service_version
+
+ARG service_user="root"
+ARG service_group="root"
+ARG service_cmd="/bin/sh"
+ARG service_cwd="/var/www/localhost/htdocs"
+ARG service_fs_name
+ARG timezone="GB"
+
+ARG keep_base="yes"
+
+ARG ROOT="/"
+ARG environment_file="/usr/libexec/environment.sh"
+ARG environment_filter="^(declare -x|export) (EDITOR|GENTOO_PROFILE|HOME|HOSTNAME|LESS(OPEN)?LS_COLORS|(MAN)?PAGER|(OLD)?PWD|PATH|(|SYS|PORTAGE_CONFIG)ROOT|SHLVL|TERM)="
+
+ARG server="lighttpd"
+ARG marker=".keep_www-servers_${server}-0"
+
+ARG DEBUG
+
+
+# -----------------------------------------------------------------------------
+
+# Import system image
+#
+FROM "localhost/${image_name}:${service_version}" AS base
+
+ARG BUILDKIT_PROGRESS
+
+ARG ROOT
+ARG environment_file
+ARG environment_filter
+
+ARG server
+
+
+RUN test -s "${environment_file}"
+
+# linter ignore=SC2094,SC2015,ER0001
+RUN <<-'EOT' /bin/sh
+	set -eu
+	[ $(( BUILDKIT_PROGRESS )) -ne 0 ] && set -x
+	{ set -o pipefail 2>/dev/null || true ; }
+
+	if ! command -v grep >/dev/null 2>&1; then
+		echo >&2 "FATAL: Unable to locate 'grep' binary"
+		exit 1
+	fi
+
+	mkdir -p "${ROOT}$( dirname "${environment_file}" )"
+	printf "#FILTER: '%s'\n\n" "${environment_filter}" \
+		> "${ROOT}${environment_file}"
+	export -p |
+		grep -- '=' |
+		grep -Ev -- "${environment_filter}" |
+		sed -r 's/\s+/ /g ; s/^(export [a-z][a-z0-9_]+=")\s+/\1/i' |
+		grep -v \
+				-e '^export [a-z_]' \
+				-e '=""$' \
+			>> "${ROOT}${environment_file}"
+	if grep >&2 -E -- '(^|\s+)ROOT=' "${ROOT}${environment_file}"; then
+		printf >&2 "... invalid 'ROOT' directive in '%s':\n\n%s\n\n" \
+			"${ROOT%"/"}${environment_file}" \
+			"$( cat "${ROOT}${environment_file}" )"
+		exit 1
+	fi
+
+	if [ -s /builddeps.txt ] && ! [ -s "${ROOT}/builddeps.txt" ]; then
+		mv /builddeps.txt "${ROOT}/builddeps.txt"
+	fi
+EOT
+#RUN printf >&2 " * 'service' stage propagated environment:\n\n%s\n\n" \
+#        "$( cat "${ROOT}${environment_file}" )"
+
+# For some reason, webapp-config doesn't seem to get called for *all* installed
+# webapps...
+RUN <<-'EOT' /bin/sh
+	set -u
+	[ $(( BUILDKIT_PROGRESS )) -ne 0 ] && set -x
+
+	if [ -d /usr/share/webapps ]; then
+		rm -r /etc/portage/repos.conf
+
+		for webapp in $( find /usr/share/webapps/ -mindepth 1 -maxdepth 1 -type d -print ); do
+			for version in $( find "${webapp}"/ -mindepth 1 -maxdepth 1 -type d -print ); do
+				find "${version}"/ \
+					-mindepth 1 \
+					-maxdepth 1 \
+					-iname '*.md' -or -iname 'Dockerfile' \
+					-delete
+
+				webapp="$( basename "${webapp}" )"
+				version="$( basename "${version}" )"
+				if [ -e "/var/www/localhost/htdocs/${webapp}" ]; then
+					echo "Upgrading existing webapp '${webapp}:${version}' ..."
+
+					webapp-config \
+								-s "${server}" \
+								-h 'localhost' \
+								-d "${webapp}" \
+								-U "${webapp}" \
+							"${version}" 2>/dev/null ||
+						webapp-config \
+								-s "${server}" \
+								-h 'localhost' \
+								-d "${webapp}" \
+								-I "${webapp}" \
+							"${version}" || :
+				else
+					echo "Installing new webapp '${webapp}:${version}' ..."
+
+					webapp-config \
+							-s "${server}" \
+							-h 'localhost' \
+							-d "${webapp}" \
+							-I "${webapp}" \
+						"${version}" || :
+				fi
+			done
+		done
+	fi
+EOT
+
+
+# -----------------------------------------------------------------------------
+
+# Create a new container
+#
+FROM scratch
+
+ARG BUILDKIT_PROGRESS
+
+ARG service_name
+ARG service_name_short
+ARG service_version
+
+ARG service_user
+ARG service_group
+ARG service_cmd
+ARG service_cwd
+ARG service_fs_name
+ARG timezone="GB"
+
+ARG keep_base
+
+ARG ROOT
+ARG environment_file
+
+ARG marker
+ARG DEBUG
+
+ENV service_cmd="${service_cmd}"
+ENV fs_name="${service_fs_name}"
+
+# Copy the installed tree into the current image
+#
+#COPY --from=base "${ROOT}" /
+COPY --from=base /bin/busybox /bin/
+COPY --from=base /usr/share/doc /usr/share/doc/
+#COPY --from=base /usr/share/info /usr/share/info/
+COPY --from=base /usr/share/man /usr/share/man/
+#COPY --from=base /var/db/pkg /var/db/
+
+SHELL ["/bin/busybox", "sh", "-c"]
+RUN busybox mkdir -p /sbin && busybox --install -s
+
+SHELL ["/bin/sh", "-c"]
+RUN test -d /usr/share/doc && test -d /usr/share/man
+#RUN test -d /usr/share/doc && test -d /usr/share/info && test -d /usr/share/man
+
+COPY --from=base "${environment_file}" "${environment_file}"
+RUN test -s "${environment_file}"
+
+COPY --from=base /etc/group /etc/
+#COPY --from=base /etc/gshadow /etc/  # Doesn't exist in source image
+COPY --from=base /etc/passwd /etc/
+COPY --from=base /etc/shadow /etc/
+#COPY --from=base /etc/ethertypes /etc/  # net-firewall/iptables only
+COPY --from=base /etc/networks /etc/
+COPY --from=base /etc/protocols /etc/
+COPY --from=base /etc/services /etc/
+COPY --from=base /etc/shells /etc/
+#COPY --from=base /usr/share/zoneinfo /usr/share/zoneinfo/
+COPY --from=base "/usr/share/zoneinfo/${timezone}" /etc/localtime
+
+COPY --from=base /var/www /var/www/
+COPY --from=base /var/db/webapps /var/db/webapps/
+RUN test -d /var/www/localhost && test -e /var/db/webapps/.keep_app-admin_webapp-config-0
+
+COPY content/sites /var/www/
+COPY content/cgi-bin /var/www/localhost/cgi-bin/
+COPY content/htdocs /var/www/localhost/htdocs/
+COPY --chown=nobody:lighttpd content/config /srv/config/
+RUN <<-'EOT' /bin/sh
+	set -eu
+	[ $(( BUILDKIT_PROGRESS )) -ne 0 ] && set -x
+
+	find /var/www/ -type f -name .gitkeep -delete
+	find /srv/config/ -type f -name .gitkeep -delete
+
+	test -e "/var/www/${marker}" &&
+		test -e "/var/www/localhost/htdocs/${marker}"
+	#	test -e "/var/www/localhost/cgi-bin/${marker}"
+EOT
+
+LABEL maintainer="stuart@shelton.me"
+LABEL description="Gentoo ${service_name}-${service_version} web volume container"
+
+# Try to get nice colours ...
+#
+ARG SET_TERM="${TERM:-xterm}"
+ENV TERM="${SET_TERM}"
+
+RUN echo "${service_cmd}" ; test -x "${service_cmd}"
+
+# Ensure that all of the relevant users and groups exist inside the
+# container ...
+#
+COPY content/passwd content/group /tmp/
+# linter ignore=SC2050,SC2012,ER0001
+RUN <<-'EOT' /bin/sh
+	set -eu
+	[ $(( BUILDKIT_PROGRESS )) -ne 0 ] && set -x
+	{ set -o pipefail 2>/dev/null || true ; }
+
+	if [ -s /tmp/passwd ]; then
+		cat /tmp/passwd >> /etc/passwd
+	fi
+	if [ -s /tmp/group ]; then
+		cat /tmp/group >> /etc/group
+	fi
+
+	cut -d':' -f 3,4,6 /etc/passwd | while IFS=':' read -r u g d; do
+		[ "${d}" = '/dev/null' ] && continue
+
+		mkdir -p "${d}"
+		if echo "${d}" | grep -q -- '^/home'; then
+			chown "${u}:${g}" "${d}"
+			chmod 0750 "${d}"
+		fi
+	done
+
+	rm -f /tmp/passwd /tmp/group
+EOT
+
+# Remove extraneous documentation & manpages ...
+#
+RUN <<-'EOT' /bin/sh
+	set -u
+	[ $(( BUILDKIT_PROGRESS )) -ne 0 ] && set -x
+	{ set -o pipefail 2>/dev/null || true ; }
+
+	find /usr/share/doc/ \
+		-depth \
+		-mindepth 1 \
+		-maxdepth 1 \
+		-type d \
+		-not -name 'webapp-config-*' \
+		$(
+				find /var/db/webapps/ \
+						-mindepth 2 \
+						-maxdepth 2 |
+					cut -d'/' -f 5-6 |
+					sed 's#/#-#' |
+					while read -r w; do
+						printf '-not -name "%s" ' "${w}"
+					done
+			) \
+		-exec rm -r {} +
+
+	find /usr/share/man/ \
+		-type l \
+		-not -name 'webapp-config.*' \
+		-delete
+
+	find /usr/share/man/ \
+		-type f \
+		-not -name 'webapp-config.*' \
+		-delete
+
+	find /usr/share/man \
+		-depth \
+		-type d \
+		-exec \
+			rmdir -p --ignore-fail-on-non-empty {} +
+EOT
+
+# Deploy configuration and relocate (remaining) documentation, info-pages, and
+# manpages for later collection using '--volumes-from' ...
+#
+# linter ignore=ER0003
+RUN <<-'EOT' /bin/sh
+	set -eu
+	[ $(( BUILDKIT_PROGRESS )) -ne 0 ] && set -x
+	{ set -o pipefail 2>/dev/null || true ; }
+
+	(
+		handle_object() {
+			src="${1:-}"
+			dst="${2:-}"
+			trim="${PWD}"
+
+			[ -n "${src:-}" -a -n "${dst:-}" ] || return
+			[ -e "${src}" ] || [ -L "${src}" ] || return
+
+			[ -d "${dst}" ] || mkdir -pm 0775 "${dst}"
+
+			if [ -f "${src}" ] || [ -L "${src}" ]; then
+				if [ -e "${dst%"/"}/${src}" ]; then
+					echo >&2 ">>> Backing-up existing destination object" \
+						"'${dst%"/"}/${src}' to '${dst%"/"}/${src}.dist'..."
+					mv "${dst%"/"}/${src}" "${dst%"/"}/${src}.dist"
+				else
+					[ -n "${DEBUG:-}" ] &&
+						echo >&2 "--- File '${dst%"/"}/${src}' does not" \
+							"exist prior to deployment ..."
+				fi
+
+				dir="$( dirname "${src}" )"
+				dir="${dst%"/"}/${dir#"${trim%"/"}/"}"
+
+				[ -n "${DEBUG:-}" ] &&
+					echo >&2 "--> Ensuring directory '${dir}' exists ..."
+				mkdir -pm 0775 "${dir}"
+
+				echo >&2 ">>> Deploying file '${src}' to '${dir}' ..."
+				mv "${src}" "${dir}"/
+				return
+
+			elif [ -d "${src}" ]; then
+				case "$( basename "${src}" )" in
+					.git)
+						[ -n "${DEBUG:-}" ] &&
+							echo >&2 "--> Skipping and removing directory" \
+								"'${src}' ..."
+						rm -rf "${src}"
+						return
+						;;
+					.svn) \
+						[ -n "${DEBUG:-}" ] &&
+							echo >&2 "--> Skipping and removing directory" \
+								"'${src}' ..."
+						rm -rf "${src}"
+						return
+						;;
+				esac
+
+				find "${src}" -mindepth 1 -maxdepth 1 -print |
+					while read -r x
+				do
+					x="${x#"${trim%"/"}/"}"
+
+					[ -n "${DEBUG:-}" ] &&
+						echo >&2 "--- Recursing for object '${x}' ..."
+
+					handle_object "${x}" "${dst}"
+				done
+
+				[ -n "${DEBUG:-}" ] &&
+					echo >&2 "--> Removing processed directory '${src}' ..."
+				rmdir "${src}" || ls -lAR "${src}"
+
+				return
+			fi
+		}
+
+		cd /srv/config || exit 0
+
+		chmod -R ug+rwX /srv/config/
+
+		find /srv/config/ -mindepth 1 -maxdepth 1 -type d -print |
+			while read -r base
+		do
+			app="$( basename "${base}" )"
+			echo >&2 "Found content for webapp '${app}' in directory '${base}' ..."
+
+			find "${base}"/ -mindepth 1 -maxdepth 1 -print |
+				while read -r object
+			do
+				handle_object "${object}" "/var/www/localhost/htdocs"/
+			done
+
+			rmdir "${base}" || ls -lAR "${base}"
+		done
+
+		cd /
+		rm -f /srv/config/.keep* 2>/dev/null || :
+		rmdir /srv/config || ls -lAR /srv/config/
+	)
+
+	mkdir -p "/srv/${service_name_short}/usr/share"
+	if [ -d /usr/share/doc ]; then
+		mv /usr/share/doc "/srv/${service_name_short}/usr/share/" &&
+			ln -s "../../srv/${service_name_short}/usr/share/doc" /usr/share/
+	fi
+	if [ -d /usr/share/info ]; then
+		mv /usr/share/info "/srv/${service_name_short}/usr/share/" &&
+			ln -s "../../srv/${service_name_short}/usr/share/info" /usr/share/
+	fi
+	if [ -d /usr/share/man ]; then
+		mv /usr/share/man "/srv/${service_name_short}/usr/share/" &&
+			ln -s "../../srv/${service_name_short}/usr/share/man" /usr/share/
+	fi
+EOT
+
+# linter ignore=EW0001
+WORKDIR "${service_cwd}"
+
+USER "${service_user}:${service_group}"
+
+VOLUME ["/srv/${service_name_short}","/var/www"]
+
+# Must be in shell-form to interpolate ARG/ENV values...
+#
+# linter ignore=EJ0002
+CMD "${service_cmd}"
+
+# linter ignore=ED0004
+# vi: set colorcolumn=80 noexpandtab shiftwidth=4 syntax=dockerfile tabstop=4 nowrap:

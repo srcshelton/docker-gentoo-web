@@ -1,6 +1,4 @@
 #! /usr/bin/env bash
-#
-# shellcheck disable=SC2207
 
 declare trace="${TRACE:-}"
 # shellcheck disable=SC2034
@@ -9,62 +7,182 @@ declare debug="${DEBUG:-}"
 set -eu
 set -o pipefail
 
-cd "$( dirname "$( readlink -e "${0}" )" )" || exit 1
+cd "$( dirname "$( realpath -e "${0}" )" )" || exit 1
+
+#(( trace )) && set -o xtrace
 
 # Set by common/vars.sh, sourced below...
 #
 #declare build_name=''
 #declare base_dir=''
+#declare use_essential=''
+#declare use_essential_gcc=''
+#declare python_default_target=''
 #declare log_dir=''
 
-# shellcheck disable=SC2034 # Set from common/vars.sh
-#declare use_essential=''
+# Set in run.sh
+#
 #declare _command='docker'
 #declare docker_readonly=''
+#declare environment_file=''
 #declare environment_filter=''
-# shellcheck disable=SC2034
+#
 #declare red=''
 #declare blue=''
 #declare reset=''
 
 # shellcheck disable=SC1091
-[ ! -s common/vars.sh ] || . common/vars.sh
+[[ ! -s common/vars.sh ]] || . common/vars.sh
+declare -i rc=${?}
 # shellcheck disable=SC2034 # Set from common/vars.sh
-[[ -n "${__COMMON_VARS_INCLUDED:-}" ]] || {
-	echo >&2 "FATAL: Inclusion of common defaults failed"
+if (( rc )) || [[ -z "${__COMMON_VARS_INCLUDED:-}" ]]; then
+	echo >&2 "FATAL: Inclusion of common defaults failed$( # <- Syntax
+			(( rc )) && echo ": ${rc}"
+		)"
 	exit 1
-}
+fi
+unset rc
 
-# shellcheck disable=SC2034,SC2154
-declare IMAGE="${build_name}:latest"
+# shellcheck disable=SC2154
+declare IMAGE="${build_name}:${override_tag}"
+
 # shellcheck disable=SC1091
-[ -s common/run.sh ] && . common/run.sh >/dev/null
-
-if (( EUID )); then
-	die "Please re-run '$( basename "${0}" )' as user 'root'"
+[[ -s common/run.sh ]] && . common/run.sh >/dev/null
+if [[ "$( type -t 'die' )" != 'function' ]]; then
+	echo >&2 "FATAL: Unable to source shared functions from" \
+		"'common/run.sh': ${?}"
+	exit 127
 fi
 
-service='app-admin/webapp-config'
-user='root'
-group='root'
-container_cwd='/var/www'
+declare docker_version=''
+# shellcheck disable=SC2154
+docker_version="$( docker version --format '{{.Client.Version}}' )" ||
+	die "Cannot determine ${_command} version: ${?}"
+readonly docker_version
+
+# From buildah-1.33.0/podman-4.8.0, Docker syntax 1.3-labs/1.4 HEREDOC support
+# is available...
+#
+select_file() {
+	local file="${1:-}"
+
+	[[ -n "${file:-}" ]] || return 1
+	[[ -n "${docker_version:-}" ]] || return 1
+
+	if [[ "${_command:-}" == 'podman' ]] && [[ "$( # <- Syntax
+			printf '%s\n' '4.8.0' "${docker_version}" | sort -V | head -n 1
+		)" == '4.8.0' ]]
+	then
+		if [[ -s "${PWD%"${base_dir:-}"}/${base_dir:+"${base_dir}/"}${file}-1.4" ]]
+		then
+			file+='-1.4'
+		elif ! [[ -s "${PWD%"${base_dir:-}"}/${base_dir:+"${base_dir}/"}${file}" ]]
+		then
+			return 66 # EX_NOINPUT "cannot open input"
+		fi
+	fi
+
+	printf '%s' "${file}"
+
+	return 0
+}  # select_file
+
+declare cflags='' cxxflags=''
+
+if type -fp emerge >/dev/null 2>&1; then
+	cflags="$( # <- Syntax
+			emerge --info 2>&1 |
+				grep -- '^CFLAGS=' |
+				awk -F'"' '{print $2}' || :
+		)"
+	cxxflags="$( # <- Syntax
+			emerge --info 2>&1 |
+				grep -- '^CXXFLAGS=' |
+				awk -F'"' '{print $2}' || :
+		)"
+else
+	# If we don't have 'emerge', then we likely lack the profile default
+	# value for LDFLAGS, which isn't overridden.  We'll also lack any
+	# -march/-mcpu flags, as these are added by the build system in
+	# containers only.
+	#
+	eval "$( # <- Syntax
+		# shellcheck disable=SC2034
+		[[ -n "${LDFLAGS:-}" ]] || case "${arch:-"$( uname -m )"}" in
+			amd64|ppc64|x86)
+				LDFLAGS='-Wl,-O1 -Wl,--as-needed -Wl,-z,pack-relative-relocs'
+				;;
+			*)
+				LDFLAGS='-Wl,-O1 -Wl,--as-needed'
+				;;
+		esac
+		[[ -n "${ARCH:-}" ]] || ARCH="${arch:-"$( uname -m )"}"
+
+		# shellcheck disable=SC1091
+		. /etc/portage/make.conf 2>&1
+		set |
+			grep -F -- 'FLAGS=' |
+			sed 's|^[A-Z_]\+=|\L&| ; s|$|;|' |
+			grep -E -- '^c(xx)?flags='
+	)"
+fi
+[[ -n "${cflags:-}" ]] || cflags='-O2 -pipe'
+[[ -n "${cxxflags:-}" ]] || cxxflags="${cflags}"
+
+# The addition of ${cc_target_opts} here is only to prevent confusion - it
+# should still be applied within build-containers!
+#
+print "Found CFLAGS '${cc_target_opts:+"${cc_target_opts} "}${cflags}'"
+print "Found CXXFLAGS '${cc_target_opts:+"${cc_target_opts} "}${cxxflags}'"
+
+# Support 'core' user for podman+machine Fedora default user...
+if [[ "$( uname -s )" == 'Darwin' ]]; then
+	if (( EUID )) && [[ "$( id -nu )" == 'core' ]]; then
+		die "Please re-run '$( basename "${0}" )' as user 'root'"
+	fi
+fi
+
+
+[[ -n "${trace:-}" ]] && set -o xtrace
+
+declare service='app-admin/webapp-config'
+declare user='root'
+declare group='root'
+declare container_cwd='/var/www'
 
 #declare package=''
 #declare package_name=''
 #declare package_version=''
 #declare repo=''
 #declare container_name=''
-container_prefix='buildweb'
+declare container_prefix='buildweb'
 _docker_resolve "${service%"::"*}" "${container_prefix}"
-# shellcheck disable=SC2001,SC2154 # POSIX sh compatibility
-container_name="$( echo "${package}" | sed 's|/|.|' )"
-# shellcheck disable=SC2001 # POSIX sh compatibility
-package_name="$( echo "${package_name}" | sed 's|/|.|' )"
-#declare fs_name=''
-export container_name package_name
-echo "${service}" | grep -Fq -- '::' && repo="${service#*"::"}"
+# shellcheck disable=SC2154
+container_name="${package/\//.}"
+package_name="${package_name/\//.}"
+keep_base='yes'
 
-if [ $(( $# )) -gt 1 ] || echo " ${*:-} " | grep -Eq -- ' -(h|-help) '; then
+#declare fs_name=''
+
+export container_name package_name
+grep -Fq -- '::' <<<"${service}" && repo="${service#*"::"}"
+
+if [[ "${container_name}" == 'podman' ]]; then
+	die "Suspicious container name '${container_name}'"
+else
+	print "Using container name '${container_name}'"
+fi
+
+if [[ -z "${package_name:-}" ]]; then
+	die "Cannot extract package name from service name '${service}'" \
+		"(${package})"
+fi
+if [[ -z "${package_version:-}" ]]; then
+	die "Cannot extract package version from service name '${service}'" \
+		"(${package})"
+fi
+
+if (( $# > 1 )) || grep -Eq -- ' -(h|-help) ' <<<" ${*:-} "; then
 	output >&2 "Usage: $( basename "${0}" ) [--force]"
 	output >&2
 	output >&2 "Options:"
@@ -74,75 +192,321 @@ if [ $(( $# )) -gt 1 ] || echo " ${*:-} " | grep -Eq -- ' -(h|-help) '; then
 	exit 0
 fi
 
+# ... from common/vars.sh:
+#use_essential="asm ipv6 perl_features_ithreads ktls mdev multiarch native-extensions split-usr ssp threads$ ${use_cpu_flags:-}
+#use_essential_gcc='default-stack-clash-protection default-znow graphite -jit nptl openmp pch pie -sanitize ssp -vtv zstd'
 
-if [ "${container_name}" = 'podman' ]; then
-	die "Suspicious container name '${container_name}'"
-else
-	print "Using container name '${container_name}'"
-fi
-
-if [ -z "${package_name:-}" ]; then
-	die "Cannot extract package name from service name '${service}'" \
-		"(${package})"
-fi
-if [ -z "${package_version:-}" ]; then
-	die "Cannot extract package version from service name '${service}'" \
-		"(${package})"
-fi
-
-
-# from common/vars.sh:
-#use_essential="asm ipv6 ithreads mdev nptl threads tls-heartbeat zlib ${use_cpu_flags}"
-
+# shellcheck disable=SC2034
+declare force_python=''
+# shellcheck disable=SC2034
 declare pre_remove='' pre_pkgs='' pre_use=''
 declare with_use='' extra_pkgs=''
-declare post_pkgs='' post_use=''
-declare php_target=''
+# shellcheck disable=SC2034
+declare post_pkgs='' post_use='' post_remove=''
+declare gcc_extra_use_flags='pch'  # N.B. 'pch' now masked due to fragility...
 declare python_target=''
+declare php_target=''
 
 # There's probably a better way of doing this, but for now let's assume that
-# the php & python configuration for the root system and the confguration for
-# the container build environment is the same (... which is reasonable, unless
+# the php & python configurations for the root system and the confgurations for
+# the container build environment are the same (... which is reasonable, unless
 # overridden, as they share a common portage tree and therefore base set of
 # python and php defaults).
-python_target="$( portageq envvar 'PYTHON_SINGLE_TARGET' )"
-print "Building for python version '${python_target:="python3_13"}'"
+if type -fp portageq >/dev/null 2>&1; then
+	python_target="$( portageq envvar 'PYTHON_SINGLE_TARGET' )"
+	case "${original_service:-}" in
+		php[0-9][0-9])
+			php_targets="${original_service%[0-9]}-${original_service#"php"[0-9]}"
+			;;
+		*)
+			php_targets="$( # <- Syntax
+					for t in $( portageq envvar 'PHP_TARGETS' ); do
+							echo "php_targets_${t}"
+					done |
+						sort -V |
+						tail -n 1
+				)"
+			;;
+	esac
+else
+	# shellcheck disable=SC2154
+	python_single_target="${python_default_target##*" "}"
+	python_target="${python_single_target:-"${python_default_target}"}"
+	case "${original_service:-}" in
+		php[0-9][0-9])
+			php_targets="${original_service%[0-9]}-${original_service#"php"[0-9]}"
+			;;
+		*)
+			# FIXME: Hard-coded
+			php_targets='php_targets_php8-3'
+			;;
+	esac
+fi
+print "Building for python version '${python_target}'"
+print "Building for PHP version(s) '${php_targets}'"
 
-php_target="$( # <- Syntax
-		portageq envvar PHP_TARGETS |
-			xargs -rn 1 |
-			sort -V |
-			head -n 1
-	)"
-print "Building for PHP version(s) '${php_target:="${php_default_target}"}'"
+output "Setting build variables for package 'webapp-config' ..."
 
-
-info "Setting build variables for package 'webapp-config' ..."
-pre_pkgs='sys-apps/portage dev-libs/libpcre2 sys-apps/help2man sys-devel/gcc sys-apps/busybox sys-apps/grep sys-apps/sed sys-apps/gawk app-alternatives/awk app-admin/eselect dev-lang/php www-servers/lighttpd virtual/httpd-cgi virtual/httpd-fastcgi virtual/httpd-php'
 # shellcheck disable=SC2154
 print "'use_essential_gcc' is '${use_essential_gcc}'"
+
+pre_pkgs='sys-apps/portage dev-libs/libpcre2 sys-apps/help2man sys-devel/gcc'
+pre_pkgs+=' sys-apps/busybox sys-apps/grep sys-apps/sed sys-apps/gawk'
+pre_pkgs+=' app-alternatives/awk app-admin/eselect dev-lang/php'
+pre_pkgs+=' www-servers/lighttpd virtual/httpd-cgi virtual/httpd-fastcgi'
+pre_pkgs+=' virtual/httpd-php'
 pre_use="$( replace_flags \
-		"${use_essential_gcc:-}" \
-		'-lib-only' 'gawk' 'internal-glib' 'pcre' 'ssl' 'unicode' \
-		"php_targets_${php_target}" \
-		"python_targets_${python_target}" \
-		"python_single_target_${python_target}" \
-	-- "${pre_use[@]:-}"
-)"
+			"${use_essential_gcc:-}" \
+			'-cet' '-lib-only' '-nls' \
+			'fpm' 'gawk' 'internal-glib' 'pcre' 'ssl' 'unicode' \
+			"php_targets_${php_target}" \
+			"python_targets_${python_target}" \
+			"python_single_target_${python_target}" \
+		-- "${pre_use[@]:-}"
+	)"
 extra_pkgs='sys-apps/sed'
 # aolserver apache cherokee gatling lighttpd nginx +portage tracd uwsgi
-with_use="$( # <- Syntax
-	replace_flags \
+with_use="$( replace_flags \
 			"php_targets_${php_target}" \
 			"python_targets_${python_target}" \
 			"python_single_target_${python_target}" \
 		-- "${with_use[@]:-}"
-)"
-post_pkgs='sys-devel/gcc'
-post_use="$( replace_flags 'lib-only' -- "${post_use[@]:-}" )"
+	)"
+#post_pkgs='sys-devel/gcc'
+#post_use="$( replace_flags 'lib-only' -- "${post_use[@]:-}" )"
 container_cmd='/bin/true'
 
-if ! [ -s content/webapps.conf ]; then
+# Somehow, we're losing CPU_FLAGS_${ARCH} during builds...
+#
+# We want to abort here if we've somehow not inherited ${use_cpu_flags} from
+# common/vars.sh
+#
+# shellcheck disable=SC2154
+pre_use="${use_cpu_flags}${pre_use:+" ${pre_use}"}"
+with_use="${use_cpu_flags}${with_use:+" ${with_use}"}"
+
+# If OpenMP is enabled, then utilities such as /bin/login require libgomp.
+# FIXME: At this point, this logic should be removed and sys-devel/gcc force-
+#        enabled at all times...
+#
+#        ... although the only affected packages seem to be sys-apps/shadow
+#        (/bin/login) and sys-libs/libxcrypt (/lib64/libcrypt.so.1.1.0)
+#
+if ! grep -q -- ' sys-devel/gcc ' <<<"${pre_pkgs:-}"; then
+	if
+			echo " ${use_essential:-} ${use_essential_gcc:-}" \
+						"${pre_use:-} ${with_use:-} ${post_use:-}" \
+						"${gcc_extra_use_flags:-} " |
+					grep -q -- ' openmp ' ||
+				echo " ${cflags} ${cxxflags} " |
+					grep -q -- '\s-fopenmp\s'
+	then
+		print "Adding pre-installation package 'sys-devel/gcc' due to" \
+			"presence of 'openmp' USE flag or C(XX)FLAG"
+		pre_pkgs="${pre_pkgs:+"${pre_pkgs} "}sys-devel/gcc"
+	fi
+fi
+
+for arg in pre_remove pre_use pre_pkgs with_use extra_pkgs post_use post_pkgs \
+	post_remove
+do
+	eval "${arg}=\$( tr $'\n' ' ' <<<\"\${${arg}}\" | tr -s '[:space:]' ' ' | sed 's/^ // ; s/ $//' )"
+done
+unset arg
+#print "Additional USE flags are '${with_use:-"<none>"}'"
+
+declare pkg=''
+declare -i warning=0
+for pkg in ${post_pkgs:-}; do
+	if ! grep -Fq " ${pkg} " <<<" ${package:-} ${extra_pkgs:-} "
+	then
+		warn "post_pkg entry '${pkg}' will be rebuilt without dependencies," \
+			"but does not appear in 'extra_pkgs'"
+		warn
+		warning=1
+	fi
+done
+unset pkg
+
+#case " ${pre_pkgs} " in
+#	*' sys-apps/help2man '*)
+#		pre_use="$( replace_flags 'nls' -- "${pre_use:-}" )"
+#		;;
+#esac
+case " ${pre_pkgs} " in
+	*' sys-devel/gcc '*)
+		print "Considering sys-devel/gcc additional flags ..."
+		if
+				echo " ${use_essential:-} ${use_essential_gcc:-}" \
+						"${pre_use:-} ${with_use:-} ${post_use:-}" \
+						"${gcc_extra_use_flags:-} " |
+					grep -q -- ' openmp '
+		then
+			print "Force-enabling 'openmp' initial USE flag"
+			gcc_extra_use_flags="$( # <- Syntax
+				replace_flags 'openmp' -- "${gcc_extra_use_flags:-}"
+			)"
+		fi
+		if echo " ${cflags} ${cxxflags} " |
+				grep -Fqw -e '-fgraphite' -e '-fgraphite-identity' \
+					-e '-floop-nest-optimize' -e '-floop-parallelize-all'
+		then
+			print "Force-enabling 'graphite' initial USE flag"
+			gcc_extra_use_flags="$( # <- Syntax
+				replace_flags 'graphite' -- "${gcc_extra_use_flags:-}"
+			)"
+		fi
+		pre_use="$( replace_flags "${use_essential_gcc:-}" "${gcc_extra_use_flags:-}" -- "${pre_use:-}" )" || :
+#		if [[ " ${extra_pkgs:-} " == *' sys-devel/gcc '* ]]; then
+#			# spamassassin updates require perl and a functioning compiler
+#			# in the container, hpl requires a compiler...
+#			print "Applying settings for containers which require a" \
+#				"functional toolchain ..."
+#			if [[ -n "${post_pkgs:-}" ]]; then
+#				warn "sys-devel/gcc needs to be rebuilt (without" \
+#					"dependencies) but 'post_pkgs' is non-empty... suggest" \
+#					"moving 'post_pkgs' to 'extra_pkgs'"
+#				warn "post_pkgs contains '${post_pkgs}'"
+#				warn
+#				warning=1
+#			fi
+#			post_pkgs="${post_pkgs:+"${post_pkgs} "}sys-devel/gcc sys-libs/zlib virtual/libiconv virtual/zlib --nodeps"
+#			with_use="$( replace_flags '-lib-only' -- "${with_use}" )"
+#			pre_use="$( replace_flags 'graphite' '-lib-only' '-openmp' -- "${pre_use:-}" )"
+#			post_use="$( replace_flags '-graphite' '-lib-only' '-openmp' -- "${post_use:-}" )"
+#			if [[ " ${gcc_extra_use_flags} " == *' openmp '* ]]; then
+#				pre_use="$( replace_flags 'openmp' -- "${pre_use:-}" )"
+#				post_use="$( replace_flags 'openmp' -- "${post_use:-}" )"
+#			fi
+#			if [[ " ${gcc_extra_use_flags} " == *' graphite '* ]]; then
+#				post_use="$( replace_flags 'graphite' -- "${post_use:-}" )"
+#				post_pkgs="dev-libs/isl${post_pkgs:+" ${post_pkgs}"}"
+#			fi
+#		else # [[ " ${extra_pkgs:-} " != *' sys-devel/gcc '* ]]; then
+			print "Applying settings for containers which don't require a" \
+				"functional toolchain ..."
+			with_use="$( replace_flags '-lib-only' -- "${with_use}" )"
+			pre_use="$( replace_flags 'graphite' '-lib-only' '-openmp' 'zstd' -- "${pre_use:-}" )"
+			post_use="$( replace_flags '-graphite' 'lib-only' '-openmp' '-zstd' -- "${post_use:-}" )"
+			if [[ " ${gcc_extra_use_flags:-} " == *' openmp '* ]]; then
+				pre_use="$( replace_flags 'openmp' -- "${pre_use:-}" )"
+				post_use="$( replace_flags 'openmp' -- "${post_use:-}" )"
+			fi
+#		fi
+		# app-portage/portage-utils includes the 'openmp' USE flag, and
+		# causes dependency problems if not kept in sync with other
+		# packages with the same flag :(
+		#
+		pre_pkgs="${pre_pkgs:+"${pre_pkgs} "}app-alternatives/yacc app-crypt/libb2 app-portage/portage-utils"
+		post_pkgs="app-crypt/libb2 app-portage/portage-utils${post_pkgs:+" ${post_pkgs}"}"
+
+		# *If* we really need app-portage/portage-utils, USE='qmanifest' pulls
+		# in app-crypt/gpgme, which we're not handling with the --nodeps final
+		# sys-devel/gcc build :(
+		#
+		pre_use="$( replace_flags '-qmanifest' -- "${pre_use}" )"
+		post_use="$( replace_flags '-qmanifest' -- "${post_use}" )"
+
+		#if
+		#		echo " ${use_essential:-} ${use_essential_gcc:-}" \
+		#				"${pre_use:-} ${with_use:-} ${post_use:-}" \
+		#				"${gcc_extra_use_flags:-} " |
+		#			grep -q -- ' zstd '
+		if
+				echo " ${post_use:-}" |
+					grep -q -- ' zstd '
+		then
+			print "Adding post-installation package 'app-arch/zstd' due to" \
+				"presence of 'zstd' USE flag"
+			post_pkgs="app-arch/zstd${post_pkgs:+" ${post_pkgs}"}"
+		fi
+		;;
+	*)
+		if grep -Fq -e ' graphite ' -e ' -lib-only ' -e ' openmp ' \
+				<<<" ${pre_use:-} ${with_use:-} ${post_use:-} "
+		then
+			die "USE contains compiler flags but 'sys-devel/gcc' is not in" \
+				"'pre_pkgs' (${pre_pkgs:-})"
+		fi
+		;;
+esac
+(( warning )) && sleep 5
+
+if ! grep -Fq ' sys-devel/gcc ' <<<" ${post_pkgs} "; then
+	post_pkgs="sys-libs/zlib virtual/zlib${post_pkgs:+" ${post_pkgs}"} --nodeps --with-bdeps=n"
+	# FIXME: What packages require these updated flags?
+	post_use="$( replace_flags '-minizip' 'xml' -- "${post_use}" )"
+fi
+
+# Make these additions after the above check, with the intention that user and
+# group packages are explicitly included rather than the user relying on the
+# group being a dependency...
+pkg=''
+case " ${pre_pkgs} " in
+	*' acct-group/'*|*' acct-user/'*)
+		# We need groups before users if we're not enforcing
+		# dependencies...
+		for pkg in ${pre_pkgs}; do
+			case "${pkg}" in
+				acct-user/*)
+					post_pkgs="${pkg}${post_pkgs:+" ${post_pkgs}"}"
+					;;
+			esac
+		done
+		for pkg in ${pre_pkgs}; do
+			case "${pkg}" in
+				acct-group/*)
+					post_pkgs="${pkg}${post_pkgs:+" ${post_pkgs}"}"
+					;;
+			esac
+		done
+		;;
+esac
+unset pkg
+
+pre_pkgs="${pre_pkgs:+"${pre_pkgs} "}sys-apps/baselayout"
+
+# Ensure we have a shell...
+extra_pkgs="${extra_pkgs:+"${extra_pkgs/app-alternatives\/sh} "}app-alternatives/sh sys-apps/busybox"
+case " ${extra_pkgs:-} " in
+	*' app-shells/bash '*|*' sys-apps/shadow '*)
+		extra_pkgs="${extra_pkgs/sys-libs\/readline} sys-libs/readline"
+		;;
+esac
+if [[ -n "${build_debug:-}" ]]; then
+	extra_pkgs="${extra_pkgs:+"${extra_pkgs} "}dev-util/strace"
+fi
+#with_use="$( replace_flags 'make-symlinks' -- "${with_use}" )"
+
+case " ${gcc_extra_use_flags:-} " in
+	*' openmp '*)
+		post_pkgs="dev-libs/gmp dev-libs/mpfr dev-libs/mpc${post_pkgs:+" ${post_pkgs}"}"
+		;;
+esac
+
+if [[ -z "${post_use:-}" && -n "${with_use:-}" ]]; then
+	post_use="$( replace_flags 'lib-only' 'openmp' -- "${with_use}" )"
+fi
+
+if echo " ${use_essential:-} ${use_essential_gcc:-}" \
+			"${pre_use:-} ${with_use:-} ${post_use:-}" \
+			"${gcc_extra_use_flags:-} " |
+		grep -Fqe ' compile-locales ' -e ' minimal '
+then
+	pre_pkgs="${pre_pkgs:+"${pre_pkgs} "}sys-libs/glibc"
+	extra_pkgs="${extra_pkgs:+"${extra_pkgs} "}sys-libs/glibc"
+	pre_use="$( replace_flags \
+		'compile-locales' 'minimal' -- "${pre_use}"
+	)"
+	with_use="$( replace_flags \
+		'compile-locales' 'minimal' -- "${with_use}"
+	)"
+	post_use="$( replace_flags \
+		'compile-locales' 'minimal' -- "${post_use}"
+	)"
+fi
+
+if ! [[ -s content/webapps.conf ]]; then
 	warn "file 'content/webapps.conf' not found - only static content will" \
 		"be served"
 	sleep 5
@@ -158,7 +522,7 @@ else
 		#export -p | grep -- ' webapp_pkgs='
 	)"
 
-	if [ -z "${webapp_pkgs:-}" ]; then
+	if [[ -z "${webapp_pkgs:-}" ]]; then
 		warn "file 'content/webapps.conf' defines no webapps - only static" \
 			"content will be served"
 		sleep 5
@@ -167,31 +531,54 @@ else
 	fi
 
 	extra_pkgs="${extra_pkgs:+"${extra_pkgs} "}${webapp_pkgs:+"${webapp_pkgs} "}sys-apps/busybox"
-	with_use="$( # <- Syntax
-		replace_flags \
+	with_use="$( replace_flags \
 				'internal-glib' 'make-symlinks' \
 				"${php_extra_use:-}" "php_targets_${php_target}" \
 				"python_targets_${python_target}" \
 				"${webapp_use:-}" \
 			-- "${with_use[@]:-}"
-	)" # static
+		)" # static
 
 	unset webapp_pkgs webapp_use php_extra_use
 fi
 
-if [ -z "${container_cmd:-}" ]; then
-	die "No container command provided"
-elif [ "${container_cmd}" = 'podman' ]; then
+print 'Final USE-flags:'
+print "pre_use: ${pre_use:-"<none>"}"
+print "with_use: ${with_use:-"<none>"}"
+print "post_use: ${post_use:-"<none>"}"
+print
+print 'Final packages:'
+print "pre_pkgs: ${pre_pkgs:-"<none>"}"
+print "extra_pkgs: ${extra_pkgs:-"<none>"}"
+print "post_pkgs: ${post_pkgs:-"<none>"}"
+
+if [[ -z "${container_cmd:-}" ]]; then
+	die 'No container command provided'
+elif [[ "${container_cmd}" == 'podman' ]]; then
 	die "Invalid container command '${container_cmd}'"
 fi
 
-[ -n "${trace:-}" ] && set -o xtrace
-
+# FIXME: shellcheck wants:
+#
+#          docker_extra_mounts+=( $( add_mount ... ) )
+#
+#        ... to be expressed in the form of:
+#
+#          readarray -O "${#docker_extra_mounts[@]}" -t docker_extra_mounts < <(
+#            add_mount ...
+#          )
+#
+# shellcheck disable=SC2207
+{
 declare -a docker_extra_mounts=()
 
 # package.accept_keywords
-if \
-		! docker_extra_mounts+=( $( add_mount --print \
+#
+# FIXME: package.accept_keywords.${arch:-} is handled in common/run.sh rather
+#        than here - standardise this to do everything in one place or the
+#        other!
+#
+if ! docker_extra_mounts+=( $( add_mount --print \
 				'%base%/etc/portage/package.accept_keywords' \
 				'.../package.accept_keywords'
 			) ) &&
@@ -200,27 +587,33 @@ if \
 			) )
 then
 	note "No 'package.accept_keywords' override found in" \
-		"'${PWD}/${base_dir:+"${base_dir}/"}etc/portage/'"
+		"'${PWD%"${base_dir:-}"}/${base_dir:+"${base_dir}/"}etc/portage/'"
 fi
-[[ -z "${arch:-}" ]] || docker_extra_mounts+=( $( add_mount --print \
-		"%base%/etc/portage/package.accept_keywords.${arch}"
-		"/etc/portage/package.accept_keywords/${arch}"
-	) ) || :
+#[[ -z "${arch:-}" ]] || docker_extra_mounts+=( $( add_mount --print \
+#		"%base%/etc/portage/package.accept_keywords.${arch}"
+#		"/etc/portage/package.accept_keywords/${arch}"
+#	) ) || :
 
 # package.license
+#
 if ! docker_extra_mounts+=( $( add_mount --print \
 			'%base%/etc/portage/package.license'
 		) )
 then
 	note "No 'package.license' override found in" \
-		"'${PWD}/${base_dir:+"${base_dir}/"}etc/portage/'"
+		"'${PWD%"${base_dir:-}"}/${base_dir:+"${base_dir}/"}etc/portage/'"
 fi
 
 # package.unmask
-docker_extra_mounts+=( $( add_mount --print \
-		"%base%/etc/portage/package.unmask/${package_name#*"."}"
-	) ) || :
-if \
+#
+# FIXME: Check the logic here, because '--dir' looks to be auto-enabled if the
+#        extra_mount path contains a '/', it's not a check that the path is a
+#        directory rather than a file... but perhaps it should be?
+#
+if
+		! docker_extra_mounts+=( $( add_mount --print \
+				"%base%/etc/portage/package.unmask/${package_name#*"."}"
+			) ) &&
 		! docker_extra_mounts+=( $( add_mount --print \
 				'%base%/etc/portage/package.unmask/package.unmask'
 			) ) &&
@@ -233,7 +626,7 @@ if \
 			) )
 then
 	note "No 'package.unmask' override found in" \
-		"'${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.unmask/'"
+		"'${PWD%"${base_dir:-}"}/${base_dir:+"${base_dir}/"}etc/portage/package.unmask/'"
 fi
 [[ -z "${arch:-}" ]] || docker_extra_mounts+=( $( add_mount --print \
 		"%base%/etc/portage/package.unmask.${arch}" \
@@ -241,34 +634,72 @@ fi
 	) ) || :
 
 # package.mask
-docker_extra_mounts+=( $( add_mount --print \
-		"%base%/etc/portage/package.mask/${package_name#*"."}"
-	) ) || :
-if \
+#
+if
 		! docker_extra_mounts+=( $( add_mount --print \
-				'%base%/etc/portage/package.mask/package.mask'
+				"%base%/etc/portage/package.mask/${package_name#*"."}" \
+				"/etc/portage/package.mask/${package_name#*"."}.host"
+			) ) &&
+		! docker_extra_mounts+=( $( add_mount --print \
+				'%base%/etc/portage/package.mask/package.mask' \
+				'/etc/portage/package.mask/package.mask.host'
 			) ) &&
 		! docker_extra_mounts+=( $( add_mount --print \
 				'%base%/etc/portage/package.mask' \
-				'.../package.mask'
-			) ) &&
-		! docker_extra_mounts+=( $( add_mount --dir --print \
-				'%base%/etc/portage/package.mask'
+				'.../package.mask.host'
 			) )
 then
 	note "No 'package.mask' override found in" \
-		"'${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.mask/'"
+		"'${PWD%"${base_dir:-}"}/${base_dir:+"${base_dir}/"}etc/portage/package.mask/'"
 fi
 [[ -z "${arch:-}" ]] || docker_extra_mounts+=( $( add_mount --print \
 		"%base%/etc/portage/package.mask.${arch}" \
 		"/etc/portage/package.mask/${arch}"
 	) ) || :
 
+# host additional package.mask
+#if [[ -d /etc/portage/package.mask ]]; then
+#	declare extra_mask='' file=''
+#	while read -r extra_mask; do
+#		file="$( basename "${extra_mask}" )"
+#		docker_extra_mounts+=( $( add_mount --print \
+#				"/etc/portage/package.mask/${file}"
+#			) )
+#	done < <( find /etc/portage/package.mask/ -mindepth 1 -maxdepth 1 -type f -not -name 'package.mask' | grep -v -- "repo-${ECLASS_OVERRIDE:-"__IGNORE__"}-mask" )
+#	unset file extra_mask
+#fi
+
+# package.use alternatives
+#
+docker_extra_mounts+=( $( add_mount --print \
+		'%base%/etc/portage/package.use/10_alternatives' \
+		'/etc/portage/package.use.override/10_alternatives'
+	) ) || :
+
+# package.use host specialisation
+#
+for u in '01_package.use.local' '05_host.use'; do
+	if
+			! docker_extra_mounts+=( $( add_mount --print \
+					"/etc/portage/package.use/${u}" \
+					"/etc/portage/package.use.override/${u}"
+				) ) &&
+			! docker_extra_mounts+=( $( add_mount --print \
+					"%base%/etc/portage/package.use/${u}" \
+					"/etc/portage/package.use.override/${u}"
+				) )
+	then
+		note "No '${u}' override found in '/etc/portage/package.use/' or" \
+			"'${PWD%"${base_dir:-}"}/${base_dir:+"${base_dir}/"}etc/portage/package.use/'"
+	fi
+done
+
 # package.use
+#
 docker_extra_mounts+=( $( add_mount --print \
 		"%base%/etc/portage/package.use/${package_name#*"."}"
 	) ) || :
-if \
+if
 		! docker_extra_mounts+=( $( add_mount --print \
 				'%base%/etc/portage/package.use/00_package.use'
 			) ) &&
@@ -277,43 +708,88 @@ if \
 			) )
 then
 	note "No 'package.use' override found in" \
-		"'${PWD}/${base_dir:+"${base_dir}/"}etc/portage/package.use/'"
+		"'${PWD%"${base_dir:-}"}/${base_dir:+"${base_dir}/"}etc/portage/package.use/'"
+fi
+
+# use.mask
+#
+if [[ -n "${arch:-}" ]] &&
+		[[ -s "${PWD%"${base_dir:-}"}/${base_dir:+"${base_dir}/"}etc/portage/profile/use.mask.${arch}" ]]
+then
+	docker_extra_mounts+=( $( add_mount --print \
+			"%base%/etc/portage/profile/use.mask.${arch}" \
+			'/etc/portage/profile/use.mask'
+		) ) || :
+else
+	docker_extra_mounts+=( $( add_mount --print \
+			'%base%/etc/portage/profile/use.mask'
+		) ) || :
+fi
+
+# package.use.force & package.use.mask
+#
+docker_extra_mounts+=( # <- Syntax
+		$( add_mount --print '%base%/etc/portage/profile/package.use.force' )
+		$( add_mount --print '%base%/etc/portage/profile/package.use.mask' )
+	) || :
+if [[ -d '/var/lib/portage/eclass/linux-info' ]]; then
+	docker_extra_mounts+=(
+		$( add_mount --dir --no-ro --print \
+				'/var/lib/portage/eclass/linux-info' \
+				'/srv/host/...'
+		) ) || :
 fi
 
 # python_targets
+#
 docker_extra_mounts+=( $( add_mount --print \
 		'%base%/etc/portage/package.use/20_python_targets'
 	) ) || :
 
 # php_targets
+#
 docker_extra_mounts+=( $( add_mount --print \
 		'%base%/etc/portage/package.use/20_php_targets'
 	) ) || :
 
-DOCKER_EXTRA_MOUNTS="${docker_extra_mounts[*]:-}"
+export DOCKER_EXTRA_MOUNTS="${docker_extra_mounts[*]:-}"
+unset docker_extra_mounts
+}
 
-#for webappdir in $( find /var/www/localhost/htdocs/ -mindepth 2 -maxdepth 2 -type d -print ); do
-#	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+"${DOCKER_EXTRA_MOUNTS} "}--mount type=bind,source=${webappdir}/,destination=${webappdir}/"
-#done
 while IFS= read -r -d '' webappdir; do
 	DOCKER_EXTRA_MOUNTS="${DOCKER_EXTRA_MOUNTS:+"${DOCKER_EXTRA_MOUNTS} "}--mount type=bind,source=${webappdir}/,destination=${webappdir}/"
 done < <(
-		find /var/www/localhost/htdocs/ -mindepth 2 -maxdepth 2 -type d -print0
+		find /var/www/localhost/htdocs/ \
+			-mindepth 2 \
+			-maxdepth 2 \
+			-type d \
+			-print0
 	)
 unset webappdir
-export DOCKER_EXTRA_MOUNTS
 
-mkdir -p "${log_dir:="../log"}" ||
+if [[ -z "${log_dir:-}" ]]; then
+	warn "log_dir not set - using 'log' in repo directory '$( # <- Syntax
+			dirname "$( realpath -e "${0}" )"
+		)'"
+elif ! [[ -d "${log_dir}" ]]; then
+	warn "Creating new log_dir '${log_dir}' ..."
+fi
+mkdir -p "${log_dir:="log"}" ||
 	die "Could not create log directory '${log_dir}': ${?}"
+
+[[ "${log_dir}" == 'log' ]] &&
+	warn "Using default '${log_dir}' for log_dir"
+
+export log_dir
 
 images="$( # <- Syntax
 		docker image list --noheading \
 			"${container_prefix}-${package_name}:${package_version}" 2>&1
 	)"
-if echo "${images:-}" |
-		grep -q -- \
-			"${container_prefix}-${package_name}\s\+${package_version}\s" &&
-		! echo " ${*:-} " | grep -Eq -- ' -(f|-force) '
+if grep -q -- \
+		"${container_prefix}-${package_name}\s\+${package_version}\s" \
+			<<<"${images:-}" &&
+		! grep -Eq -- ' -(f|-force) ' <<<" ${*:-} "
 then
 	output >&2
 	# shellcheck disable=SC2154
@@ -328,105 +804,135 @@ else
 
 	trap '' INT
 	docker container stop "${container_prefix}-${container_name}" \
-		>/dev/null 2>&1 || :
+		2>&1 >/dev/null | grep -v 'no such container' || :
 	docker container rm --volumes "${container_prefix}-${container_name}" \
-		>/dev/null 2>&1 || :
+		2>&1 >/dev/null | grep -Fv -- 'no such container' || :
 	trap - INT
+
+	# Remove glibc dependencies on gzip, grep, awk...
+	#build_use="${USE:+"${USE} "}compile-locales minimal -ssp timezone-tools"
 
 	# We're seeing virutal/mta get USE='no-mta ssmtp' with '-* no-mta' in
 	# files :(
-	build_use="$( replace_flags 'lib-only' '-ssmtp' -- "${USE:-}" )"
+	#build_use="$( replace_flags 'lib-only' '-ssmtp' -- "${USE:-}" )"
+	with_use="$( replace_flags '-ssmtp' -- "${with_use:-}" )"
 
+	# shellcheck disable=SC2089
+	if [[ -n "${L10N:-}" ]]; then
+		DOCKER_CMD_VARS="${DOCKER_CMD_VARS:+"${DOCKER_CMD_VARS} "}--env L10N=\"${L10N}\""
+	fi
+	# shellcheck disable=SC2090
+	export DOCKER_CMD_VARS
+
+	args=()
+	for arg in pre_remove force_python pre_pkgs pre_use with_use post_pkgs \
+			post_use rebuild post_remove
+	do
+		# shellcheck disable=2206,SC2191
+		[[ -n "${!arg:-}" ]] && args+=( --${arg//_/-}="${!arg}" )
+	done
+	unset arg
+
+	args+=(  # <- Syntax
+			--usepkg=y
+			--with-bdeps=n
+			--with-bdeps-auto=n
+			#--depclean-exclude="${pre_pkgs} ${extra_pkgs}"
+			#--no-package-use
+		"=${package}${repo:+"::${repo}"}"
+	)
 	# We don't want a null argument if there are no ${extra_pkgs} items
-	# shellcheck disable=SC2086
-	USE="${build_use:-}" \
-	ROOT="/" \
-	name="${container_prefix}-${container_name}" \
-	image="${IMAGE}" \
-	_docker_run \
-				  ${pre_remove:+"--pre-remove=${pre_remove}"} \
-				  ${pre_pkgs:+"--pre-pkgs=${pre_pkgs}"} \
-				  ${pre_use:+"--pre-use=${pre_use}"} \
-				  ${with_use:+"--with-use=${with_use}"} \
-				  ${post_pkgs:+"--post-pkgs=${post_pkgs}"} \
-				  ${post_use:+"--post-use=${post_use}"} \
-				--usepkg=y \
-				--with-bdeps=n \
-				--with-bdeps-auto=n \
-			"=${package}${repo:+"::${repo}"}" ${extra_pkgs:-} 2>&1 |
+	if [[ -n "${extra_pkgs:-}" ]]; then
+		declare -a additional_args=()
+		read -r -a additional_args <<<"${extra_pkgs}"
+		args+=( "${additional_args[@]}" )
+		unset additional_args
+	fi
+
+			#USE="${build_use:-}" \
+			ROOT="/" \
+			name="${container_prefix}-${container_name}" \
+			image="${IMAGE}" \
+	_docker_run "${args[@]}" 2>&1 |
 		tee "${log_dir}/${container_prefix}.${container_name}.log"
 	rc=${?}
 	output " -> ${rc}"
 
-	[ "${rc}" = '0' ] || exit 1
+	(( rc )) && exit 1
 
 	# podman is fragile :(
+	#
+	# ... more to the point, if we use 'buildah commit --squash' here then the
+	# next-stage build fails after the ROOT filesystem contents have been
+	# copied across when running 'test -s /usr/libexec/environment.sh'!?
 	trap '' INT
-	if ! command -v buildah >/dev/null 2>&1; then
-		docker container commit \
+	docker container commit \
 				"${container_prefix}-${container_name}" \
-				"${container_prefix}-${package_name}:${package_version}" 2>&1 |
-			tee -a "${log_dir}/${container_prefix}.${container_name}.log"
-	else
-		buildah commit \
-					--squash \
-				"${container_prefix}-${container_name}" \
-				"${container_prefix}-${package_name}:${package_version}" 2>&1 |
-			tee -a "${log_dir}/${container_prefix}.${container_name}.log"
-	fi
+				"${container_prefix}-${package_name}:${package_version}" \
+			2>&1 |
+		tee -a "${log_dir}/${container_prefix}.${container_name}.log"
 	rc=${?}
 	trap - INT
 	output " -> ${rc}"
 
-	[ "${rc}" = '0' ] || exit 1
+	(( rc )) && exit 1
 fi
 unset images
 
 trap '' INT
 docker container rm --volumes "${container_prefix}-${container_name}" \
-	>/dev/null 2>&1 || :
+	2>&1 >/dev/null | grep -Fv -- 'no such container' || :
 trap - INT
 
+if [[ -n "${base_dir:-}" ]]; then
+	cd "${base_dir}" || die "chdir() to '${base_dir}' failed: ${?}"
+fi
+
+declare file=''
+file="$( select_file 'Dockerfile.web' )" ||
+	die "Failed to select Container-file for 'Dockerfile.web': ${?}"
 output >&2
 output >&2 " ${blue}*${reset} Building ${package_name}:${package_version}" \
 	"(${container_cmd}) service image ..."
 output >&2
 
 declare -a args=()
+args+=(
+	--build-arg BUILDKIT_PROGRESS="$(( trace ))"
+
+	--build-arg SET_TERM="${TERM}"
+)
+[[ -n "${environment_file:-}" ]] && args+=( --build-arg environment_file="${environment_file}" )
 # shellcheck disable=SC2154,SC2207
 args+=(
 	--build-arg environment_filter="${environment_filter}"
 	--build-arg image_name="${container_prefix}-${package_name}"
 	--build-arg service_cmd="${container_cmd}"
-	  #$(
-	  #		[[ -n "${container_cwd:-}" ]] &&
-	  #			echo '--build-arg' "service_cwd=${container_cwd}"
-	  #	)
-	  #$(
-	  #		[[ -n "${fs_name:-}" ]] &&
-	  #			echo '--build-arg' "service_fs_name=${fs_name}"
-	  #	)
 	  $( add_arg container_cwd --build-arg "service_cwd=${container_cwd}" )
-	  $( add_arg fs_name --build-arg "service_fs_name=${fs_name}" )
+	  $( add_arg fs_name --build-arg "service_fs_name=${fs_name:-}" )
 	--build-arg service_group="${group}"
 	--build-arg service_name="${package_name/.//}"
-	--build-arg service_name_short="$( #
+	--build-arg service_name_short="$(  # <- Syntax
 			cut -d'/' -f 2- <<<"${package_name/.//}"
 		)"
+	#--build-arg service_ports="${ports}"
 	--build-arg service_user="${user}"
 	--build-arg service_version="${package_version}"
-	--build-arg SET_TERM="${TERM}"
+	--build-arg keep_base="${keep_base}"
 	--compress
-	--file 'Dockerfile.web'
+	--file "${file}"
 	--format 'docker'
 	--squash-all
 	--tag "service.www-servers.web-content:latest"
+	#--network slirp4netns
 )
 
-# shellcheck disable=SC2001 # POSIX sh compatibility
-#docker ${IMAGE_ROOT:+"--storage-opt='' --root ${IMAGE_ROOT}"} \
+# With the addition of the '--squash-all' parameter, the 'build' image is
+# re-squashed when 'gentoo-build'-svc.docker invokes 'Dockerfile.*service' to
+# produce the service-container image.
+#
 # shellcheck disable=SC2046
-docker $( add_arg IMAGE_ROOT --storage-opt= --root "${IMAGE_ROOT}" ) \
+docker $( add_arg IMAGE_ROOT --storage-opt= --root "${IMAGE_ROOT:-}" ) \
 		image build "${args[@]}" . 2>&1 |
 	tee "${log_dir}/web.${container_name}.log"
 				#--network slirp4netns \
@@ -435,15 +941,16 @@ rc=${?}
 output " -> ${rc}"
 
 # Keep image to allow for much faster subsequent rebuilds...
-#if [ $(( ${rc:-1} )) -eq 0 ]; then
+#
+#if ! (( rc )); then
 #	trap '' INT
 #	docker image rm "${container_prefix}-${package_name}:${package_version}" \
-#		>/dev/null 2>&1 || :
+#		2>/dev/null || :
 #	trap - INT
 #fi
 
-set +o xtrace
+#set +o xtrace
 
 exit ${rc}
 
-# vi: set colorcolumn=80:
+# vi: set colorcolumn=80 syntax=bash:

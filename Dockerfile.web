@@ -2,8 +2,16 @@
 # service:
 #   Extract a ROOT-installed service.
 
+# hadolint global ignore=DL4006,DL3025,SC3040,SC2174,SC2015,SC2012
+#
+
+# This is a hack to enable xtrace output for container-builds, intending to be
+# the least invasive (albeit Docker-oriented) means to control this feature...
+ARG BUILDKIT_PROGRESS
+
 ARG image_name
 ARG service_name
+ARG service_name_short="web-content"
 ARG service_version
 
 ARG service_user="root"
@@ -13,7 +21,10 @@ ARG service_cwd="/var/www/localhost/htdocs"
 ARG service_fs_name
 ARG timezone="GB"
 
+ARG keep_base="yes"
+
 ARG ROOT="/"
+ARG environment_file="/usr/libexec/environment.sh"
 ARG environment_filter="^(declare -x|export) (EDITOR|GENTOO_PROFILE|HOME|HOSTNAME|LESS(OPEN)?LS_COLORS|(MAN)?PAGER|(OLD)?PWD|PATH|(|SYS|PORTAGE_CONFIG)ROOT|SHLVL|TERM)="
 
 ARG server="lighttpd"
@@ -26,36 +37,49 @@ ARG DEBUG
 
 # Import system image
 #
-FROM "${image_name}:${service_version}" AS base
+FROM "localhost/${image_name}:${service_version}" AS base
+
+ARG BUILDKIT_PROGRESS
 
 ARG ROOT
+ARG environment_file
 ARG environment_filter
 
 ARG server
 
 
-RUN test -s /usr/libexec/environment.sh
+RUN test -s "${environment_file}"
 
-# linter ignore=SC2015,ER0001
-RUN { set -o pipefail 2>/dev/null || true ; } ; \
-    set -u ; \
+# linter ignore=SC2094,SC2015,ER0001
+RUN set -eu ; \
+    [ $(( BUILDKIT_PROGRESS )) -ne 0 ] && set -x ; \
+    { set -o pipefail 2>/dev/null || true ; } ; \
+    command -v grep >/dev/null 2>&1 || \
+        { \
+            echo >&2 "FATAL: Unable to locate 'grep' binary" ; \
+            exit 1 ; \
+        } ; \
     mkdir -p "${ROOT}"/usr/libexec && \
-    printf "#FILTER: '%s'\n\n" "${environment_filter}" > "${ROOT}"/usr/libexec/environment.sh && \
+    printf "#FILTER: '%s'\n\n" "${environment_filter}" > "${ROOT}${environment_file}" && \
     export -p | \
             grep -- '=' | \
             grep -Ev -- "${environment_filter}" | \
-            sed -r 's/\s+/ /g' | \
-            grep -v '^export [a-z_]' \
-        >> "${ROOT}"/usr/libexec/environment.sh && \
-    grep >&2 -- ' ROOT=' "${ROOT}"/usr/libexec/environment.sh && { \
-            printf >&2 "Invalid 'ROOT' directive in '%s/usr/libexec/environment.sh':\n\n%s\n\n" "${ROOT%"/"}" "$( < "${ROOT}"/usr/libexec/environment.sh )" ; \
+            sed -r 's/\s+/ /g ; s/^(export [a-z][a-z0-9_]+=")\s+/\1/i' | \
+            grep -v -e '^export [a-z_]' -e '=""$' \
+        >>"${ROOT}${environment_file}" && \
+    grep >&2 -- ' ROOT=' "${ROOT}${environment_file}" && { \
+            printf >&2 "Invalid 'ROOT' directive in '%s':\n\n%s\n\n" "${ROOT%"/"}${environment_file}" "$( cat "${ROOT}${environment_file}" )" ; \
             exit 1 ; \
-        } || :
-#RUN printf >&2 " * 'service' stage propagated environment:\n\n%s\n\n" "$( < "${ROOT}"/usr/libexec/environment.sh )"
+        } || : ; \
+    if [ -s /builddeps.txt ] && ! [ -s "${ROOT}/builddeps.txt" ]; then \
+        mv /builddeps.txt "${ROOT}/builddeps.txt" ; \
+    fi
+#RUN printf >&2 " * 'service' stage propagated environment:\n\n%s\n\n" "$( cat "${ROOT}${environment_file}" )"
 
 # For some reason, webapp-config doesn't seem to get called for *all* installed
 # webapps...
-RUN { set -o pipefail 2>/dev/null || true ; } ; \
+RUN set -eu ; \
+    [ $(( BUILDKIT_PROGRESS )) -ne 0 ] && set -x ; \
     if [ -d /usr/share/webapps ]; then \
         rm -r /etc/portage/repos.conf ; \
         for webapp in $( find /usr/share/webapps/ -mindepth 1 -maxdepth 1 -type d -print ); do \
@@ -82,22 +106,29 @@ RUN { set -o pipefail 2>/dev/null || true ; } ; \
 #
 FROM scratch
 
+ARG BUILDKIT_PROGRESS
+
 ARG service_name
+ARG service_name_short
 ARG service_version
 
 ARG service_user
 ARG service_group
 ARG service_cmd
+ARG service_cwd
 ARG service_fs_name
 ARG timezone="GB"
 
-ENV service_cmd="${service_cmd}"
-ENV fs_name="${service_fs_name}"
+ARG keep_base
+
 ARG ROOT
+ARG environment_file
 
 ARG marker
-
 ARG DEBUG
+
+ENV service_cmd="${service_cmd}"
+ENV fs_name="${service_fs_name}"
 
 # Copy the installed tree into the current image
 #
@@ -117,18 +148,19 @@ RUN test -d /usr/share/doc && \
     test -d /usr/share/man
 #    test -d /usr/share/info && \
 
-COPY --from=base /usr/libexec/environment.sh /usr/libexec/
-RUN test -s /usr/libexec/environment.sh
+COPY --from=base "${environment_file}" "${environment_file}"
+RUN test -s "${environment_file}"
 
 COPY --from=base /etc/group /etc/
 #COPY --from=base /etc/gshadow /etc/  # Doesn't exist in source image
 COPY --from=base /etc/passwd /etc/
 COPY --from=base /etc/shadow /etc/
-#COPY --from=base /etc/ethertypes /etc/  # Doesn't exist in source image
+#COPY --from=base /etc/ethertypes /etc/  # net-firewall/iptables only
 COPY --from=base /etc/networks /etc/
 COPY --from=base /etc/protocols /etc/
 COPY --from=base /etc/services /etc/
 COPY --from=base /etc/shells /etc/
+#COPY --from=base /usr/share/zoneinfo /usr/share/zoneinfo/
 COPY --from=base "/usr/share/zoneinfo/${timezone}" /etc/localtime
 
 COPY --from=base /var/www /var/www/
@@ -140,14 +172,16 @@ COPY content/sites /var/www/
 COPY content/cgi-bin /var/www/localhost/cgi-bin/
 COPY content/htdocs /var/www/localhost/htdocs/
 COPY --chown=nobody:lighttpd content/config /srv/config/
-RUN find /var/www/ -type f -name .gitkeep -delete ; \
+RUN set -eu ; \
+    [ $(( BUILDKIT_PROGRESS )) -ne 0 ] && set -x ; \
+    find /var/www/ -type f -name .gitkeep -delete ; \
     find /srv/config/ -type f -name .gitkeep -delete ; \
     test -e "/var/www/${marker}" && \
     test -e "/var/www/localhost/htdocs/${marker}"
     #test -e "/var/www/localhost/cgi-bin/${marker}" && \
 
 LABEL maintainer="stuart@shelton.me"
-LABEL Description="Gentoo ${service_name}-${service_version} web volume container"
+LABEL description="Gentoo ${service_name}-${service_version} web volume container"
 
 # Try to get nice colours ...
 #
@@ -161,7 +195,11 @@ RUN echo "${service_cmd}" ; \
 # container ...
 #
 COPY content/passwd content/group /tmp/
-RUN { \
+# linter ignore=SC2050,SC2012,ER0001
+RUN set -eu ; \
+    [ $(( BUILDKIT_PROGRESS )) -ne 0 ] && set -x ; \
+    { set -o pipefail 2>/dev/null || true ; } ; \
+    { \
         test ! -s /tmp/passwd || cat /tmp/passwd >> /etc/passwd ; \
         test ! -s /tmp/group || cat /tmp/group >> /etc/group ; \
     } ; \
@@ -176,7 +214,10 @@ RUN { \
 
 # Remove extraneous documentation & manpages ...
 #
-RUN find /usr/share/doc/ \
+RUN set -eu ; \
+    [ $(( BUILDKIT_PROGRESS )) -ne 0 ] && set -x ; \
+    { set -o pipefail 2>/dev/null || true ; } ; \
+    find /usr/share/doc/ \
         -depth \
         -mindepth 1 \
         -maxdepth 1 \
@@ -211,7 +252,9 @@ RUN find /usr/share/doc/ \
 # manpages for later collection using '--volumes-from' ...
 #
 # linter ignore=ER0003
-RUN { set -o pipefail 2>/dev/null || true ; } ; \
+RUN set -eu ; \
+    [ $(( BUILDKIT_PROGRESS )) -ne 0 ] && set -x ; \
+    { set -o pipefail 2>/dev/null || true ; } ; \
     ( \
         handle_object() { \
             src="${1:-}" ; \
@@ -225,11 +268,11 @@ RUN { set -o pipefail 2>/dev/null || true ; } ; \
                     echo >&2 ">>> Backing-up existing destination object '${dst%"/"}/${src}' to '${dst%"/"}/${src}.dist'..." ; \
                     mv "${dst%"/"}/${src}" "${dst%"/"}/${src}.dist" ; \
                 else \
-                    [ -n "${DEBUG}" ] && echo >&2 "--- File '${dst%"/"}/${src}' does not exist prior to deployment ..." ; \
+                    [ -n "${DEBUG:-}" ] && echo >&2 "--- File '${dst%"/"}/${src}' does not exist prior to deployment ..." ; \
                 fi ; \
                 dir="$( dirname "${src}" )" ; \
                 dir="${dst%"/"}/${dir#"${trim%"/"}/"}" ; \
-                [ -n "${DEBUG}" ] && echo >&2 "--> Ensuring directory '${dir}' exists ..." ; \
+                [ -n "${DEBUG:-}" ] && echo >&2 "--> Ensuring directory '${dir}' exists ..." ; \
                 mkdir -pm 0775 "${dir}" ; \
                 echo >&2 ">>> Deploying file '${src}' to '${dir}' ..." ; \
                 mv "${src}" "${dir}"/ ; \
@@ -237,21 +280,21 @@ RUN { set -o pipefail 2>/dev/null || true ; } ; \
             elif [ -d "${src}" ]; then \
                 case "$( basename "${src}" )" in \
                     .git) \
-                        [ -n "${DEBUG}" ] && echo >&2 "--> Skipping and removing directory '${src}' ..." ; \
+                        [ -n "${DEBUG:-}" ] && echo >&2 "--> Skipping and removing directory '${src}' ..." ; \
                         rm -rf "${src}" ; \
                         return ;; \
                     .svn) \
-                        [ -n "${DEBUG}" ] && echo >&2 "--> Skipping and removing directory '${src}' ..." ; \
+                        [ -n "${DEBUG:-}" ] && echo >&2 "--> Skipping and removing directory '${src}' ..." ; \
                         rm -rf "${src}" ; \
                         return ;; \
                 esac ; \
                 find "${src}" -mindepth 1 -maxdepth 1 -print | \
                 while read -r x; do \
                     x="${x#"${trim%"/"}/"}" ; \
-                    [ -n "${DEBUG}" ] && echo >&2 "--- Recursing for object '${x}' ..." ; \
+                    [ -n "${DEBUG:-}" ] && echo >&2 "--- Recursing for object '${x}' ..." ; \
                     handle_object "${x}" "${dst}" ; \
                 done ; \
-                [ -n "${DEBUG}" ] && echo >&2 "--> Removing processed directory '${src}' ..." ; \
+                [ -n "${DEBUG:-}" ] && echo >&2 "--> Removing processed directory '${src}' ..." ; \
                 rmdir "${src}" || ls -lAR "${src}" ; \
                 return ; \
             fi ; \
@@ -272,18 +315,18 @@ RUN { set -o pipefail 2>/dev/null || true ; } ; \
         rm -f /srv/config/.keep* 2>/dev/null || : ; \
         rmdir /srv/config || ls -lAR /srv/config/ ; \
     ) ; \
-    mkdir -p /srv/web-content/usr/share && \
+    mkdir -p "/srv/${service_name_short}/usr/share" ; \
     if [ -d /usr/share/doc ]; then \
-        mv /usr/share/doc /srv/web-content/usr/share/ && \
-        ln -s ../../srv/web-content/usr/share/doc /usr/share/ ; \
+        mv /usr/share/doc "/srv/${service_name_short}/usr/share/" && \
+        ln -s "../../srv/${service_name_short}/usr/share/doc" /usr/share/ ; \
     fi ; \
     if [ -d /usr/share/info ]; then \
-        mv /usr/share/info /srv/web-content/usr/share/ && \
-        ln -s ../../srv/web-content/usr/share/info /usr/share/ ; \
+        mv /usr/share/info "/srv/${service_name_short}/usr/share/" && \
+        ln -s "../../srv/${service_name_short}/usr/share/info" /usr/share/ ; \
     fi ; \
     if [ -d /usr/share/man ]; then \
-        mv /usr/share/man /srv/web-content/usr/share/ && \
-        ln -s ../../srv/web-content/usr/share/man /usr/share/ ; \
+        mv /usr/share/man "/srv/${service_name_short}/usr/share/" && \
+        ln -s "../../srv/${service_name_short}/usr/share/man" /usr/share/ ; \
     fi
 
 # linter ignore=EW0001
@@ -291,10 +334,12 @@ WORKDIR "${service_cwd}"
 
 USER "${service_user}:${service_group}"
 
-VOLUME ["/srv/web-content","/var/www"]
+VOLUME ["/srv/${service_name_short}","/var/www"]
 
-# Must be shell-form ...
+# Must be in shell-form to interpolate ARG/ENV values...
+#
 # linter ignore=EJ0002
 CMD "${service_cmd}"
 
-# vi: set syntax=dockerfile expandtab sw=4 ts=4 nowrap colorcolumn=80:
+# linter ignore=ED0004
+# vi: set colorcolumn=80 expandtab shiftwidth=4 syntax=dockerfile tabstop=4 nowrap:
