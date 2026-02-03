@@ -413,7 +413,7 @@ add_mount() {
 	fi
 
 	if [[ "${src}" == '%base%/'* ]]; then
-		src="${PWD}/${base_dir:+"${base_dir}/"}${src_path#"/"}"
+		src="${PWD%"${base_dir:-}"}/${base_dir:+"${base_dir}/"}${src_path#"/"}"
 	fi
 	if [[ "${src}" == *'/' ]]; then
 		# FIXME: Warn if auto-enabling directory mode?
@@ -1194,10 +1194,12 @@ _docker_run() {
 								"ring-fencing"
 						else
 							local pn=''
+							# 'dmidecode' fields change between vendor and
+							# upstream kernels :(
 							pn="$( # <- Syntax
 									dmidecode -t processor |
-										grep 'Part Number: [^ ]' |
-										sed 's/^.*Part Number: //' |
+										grep -E '(Part Number|Version): [^ ]' |
+										sed -r 's/^.*(Part Number|Version):\s+//' |
 										sort |
 										uniq |
 										head -n 1

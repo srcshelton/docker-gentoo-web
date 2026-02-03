@@ -1,8 +1,40 @@
+# vi: set nowrap syntax=gentoo-package-use sw=8 ts=8:
+#
+# 00_package.use - USE-flags for service builds
 
-*/*					-* asm ipv6 perl_features_ithreads ktls mdev multiarch native-extensions split-usr ssp threads # ${use_cpu_flags}  # from 'use_essential'
-*/*					 zlib
+# Keep the following in sync with common/vars.sh
+#
 
-app-crypt/libb2				 openmp
-sys-devel/gcc				 openmp
+*/*					-* asm ipv6 ktls mdev multiarch native-extensions split-usr ssp threads # ${use_cpu_flags}  # from 'use-essential'
 
-# vi: set nowrap syntax=gentoo-package-use:
+# 'nptl' has now been removed, and 'pch' is masked by default due to build failures...
+#
+#sys-devel/gcc				 graphite (+nptl) openmp (-pch) -sanitize ssp -vtv zstd
+
+# Add 'varrun', otherwise we end up with broken '/var/lock -> ../run/lock'
+# symlinks...
+*/*					 openssl pie ssl varrun zlib
+
+net-misc/curl				 CURL_SSL: openssl
+#net-misc/curl				 CURL_QUIC: -ngtcp2 -openssl
+net-misc/curl				-curl_quic_ngtcp2 -curl_quic_openssl
+
+*/*					 PERL_FEATURES: ithreads
+
+dev-lang/perl				 minimal
+dev-lang/python-exec			 native-symlinks
+dev-libs/libgcrypt			 getentropy
+dev-libs/libpcre2			-unicode
+dev-libs/libzip				-zstd
+dev-util/pkgconf			 pkg-config
+net-misc/curl				-adns -ares -http2 -httpsrr openssl ssl
+sys-apps/busybox			-openrc -pam -savedconfig
+sys-apps/gawk				-mpfr -readline
+sys-apps/grep				-egrep-fgrep
+sys-apps/portage			-rsync-verify -tmpfiles -xattr
+sys-apps/sed				-acl
+#sys-auth/pambase			-debug -passwdqc -sha512 pwquality yescrypt  # mktemp
+sys-auth/pambase			-debug -passwdqc -sha512 mktemp pwquality yescrypt
+sys-devel/gcc				-cet -nls default-stack-clash-protection default-znow lto pgo ssp zstd
+sys-libs/glibc				 clone3 compile-locales minimal multiarch ssp timezone-tools
+www-servers/lighttpd			 brotli dbi nettle pcre php ssl webdav xattr zlib zstd

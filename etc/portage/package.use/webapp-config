@@ -4,11 +4,12 @@
 #      will actually be used to interpret the webapp when accessed via a
 #      browser.
 
-*/*										-apng -svg -xattr
+*/*										-apng -cet -nls -svg -xattr truetype
 
 app-admin/webapp-config					 lighttpd
 sys-apps/busybox						 make-symlinks mdev static
-sys-apps/help2man						 nls
+#sys-apps/help2man						 nls
+sys-libs/libcap							 pam
 sys-libs/libxcrypt						 static-libs
 www-servers/lighttpd					-* minimal
 virtual/libcrypt						 static-libs
@@ -22,7 +23,7 @@ virtual/libcrypt						 static-libs
 app-eselect/eselect-php					 fpm
 dev-libs/libpcre2						 unicode
 
-dev-lang/php							-truetype
+#dev-lang/php							-truetype
 dev-lang/php							 curl fileinfo filter fpm gd iconv intl json mysql mysqli pdo session simplexml sockets spell sqlite unicode xml xslt zip
 dev-lang/php							 bzip2 cgi exif flatfile ftp opcache sharedme sysvpic tidy tokenizer xmlreader xmlrpc xmlwriter
 
@@ -37,11 +38,20 @@ mail-client/roundcube					 enigma mysql plugins spell sqlite ssl zxcvbn
 # required by x11-libs/pango
 media-libs/harfbuzz						 truetype
 
+# required by dev-php/pecl-imagick
+# required by media-gfx/imagemagick
+# required by gnome-base/librsvg
+# required by x11-libs/pango
+media-libs/freetype						 harfbuzz
+
 # required by mail-client/roundcube
 dev-lang/php							 ssl
 
 # required by mail-client/roundcube[plugins]
 dev-lang/php							 ctype hash phar
+
+# required by mail-client/roundcube[engima]
+app-crypt/gnupg							 alternatives
 
 # required by dev-php/PEAR-Crypt_GPG
 dev-lang/php							 cli posix
