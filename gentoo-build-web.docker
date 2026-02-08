@@ -574,21 +574,23 @@ declare -a docker_extra_mounts=()
 
 # package.accept_keywords
 #
-# FIXME: package.accept_keywords.${arch:-} is handled in common/run.sh rather
-#        than here - standardise this to do everything in one place or the
-#        other!
-#
 if ! docker_extra_mounts+=( $( add_mount --print \
 				'%base%/etc/portage/package.accept_keywords' \
-				'.../package.accept_keywords'
+				'/etc/portage/.package.accept_keywords.override/package.accept_keywords'
 			) ) &&
 		! docker_extra_mounts+=( $( add_mount --dir --print \
-				'%base%/etc/portage/package.accept_keywords'
+				'%base%/etc/portage/package.accept_keywords' \
+				'/etc/portage/.package.accept_keywords.override'
 			) )
 then
 	note "No 'package.accept_keywords' override found in" \
 		"'${PWD%"${base_dir:-}"}/${base_dir:+"${base_dir}/"}etc/portage/'"
 fi
+#
+# FIXME: package.accept_keywords.${arch:-} is handled in common/run.sh rather
+#        than here - standardise this to do everything in one place or the
+#        other!
+#
 #[[ -z "${arch:-}" ]] || docker_extra_mounts+=( $( add_mount --print \
 #		"%base%/etc/portage/package.accept_keywords.${arch}"
 #		"/etc/portage/package.accept_keywords/${arch}"
@@ -597,7 +599,8 @@ fi
 # package.license
 #
 if ! docker_extra_mounts+=( $( add_mount --print \
-			'%base%/etc/portage/package.license'
+			'%base%/etc/portage/package.license' \
+			'/etc/portage/.package.license.override'
 		) )
 then
 	note "No 'package.license' override found in" \
@@ -612,17 +615,20 @@ fi
 #
 if
 		! docker_extra_mounts+=( $( add_mount --print \
-				"%base%/etc/portage/package.unmask/${package_name#*"."}"
+				"%base%/etc/portage/package.unmask/${package_name#*"."}" \
+				"/etc/portage/.package.unmask.override/${package_name#*"."}"
 			) ) &&
 		! docker_extra_mounts+=( $( add_mount --print \
-				'%base%/etc/portage/package.unmask/package.unmask'
+				'%base%/etc/portage/package.unmask/package.unmask' \
+				"/etc/portage/.package.unmask.override/package.unmask"
 			) ) &&
 		! docker_extra_mounts+=( $( add_mount --print \
 				'%base%/etc/portage/package.unmask' \
-				'.../package.unmask'
+				'/etc/portage/.package.unmask.override'
 			) ) &&
 		! docker_extra_mounts+=( $( add_mount --dir --print \
-				'%base%/etc/portage/package.unmask'
+				'%base%/etc/portage/package.unmask' \
+				'/etc/portage/.package.unmask.override'
 			) )
 then
 	note "No 'package.unmask' override found in" \
@@ -630,7 +636,7 @@ then
 fi
 [[ -z "${arch:-}" ]] || docker_extra_mounts+=( $( add_mount --print \
 		"%base%/etc/portage/package.unmask.${arch}" \
-		"/etc/portage/package.unmask/${arch}"
+		"/etc/portage/.package.unmask.override/${arch}"
 	) ) || :
 
 # package.mask
@@ -638,15 +644,15 @@ fi
 if
 		! docker_extra_mounts+=( $( add_mount --print \
 				"%base%/etc/portage/package.mask/${package_name#*"."}" \
-				"/etc/portage/package.mask/${package_name#*"."}.host"
+				"/etc/portage/.package.mask.override/${package_name#*"."}.host"
 			) ) &&
 		! docker_extra_mounts+=( $( add_mount --print \
 				'%base%/etc/portage/package.mask/package.mask' \
-				'/etc/portage/package.mask/package.mask.host'
+				'/etc/portage/.package.mask.override/package.mask.host'
 			) ) &&
 		! docker_extra_mounts+=( $( add_mount --print \
 				'%base%/etc/portage/package.mask' \
-				'.../package.mask.host'
+				'/etc/portage/.package.mask.override/package.mask.host'
 			) )
 then
 	note "No 'package.mask' override found in" \
@@ -654,7 +660,7 @@ then
 fi
 [[ -z "${arch:-}" ]] || docker_extra_mounts+=( $( add_mount --print \
 		"%base%/etc/portage/package.mask.${arch}" \
-		"/etc/portage/package.mask/${arch}"
+		"/etc/portage/.package.mask.override/${arch}"
 	) ) || :
 
 # host additional package.mask
@@ -663,7 +669,8 @@ fi
 #	while read -r extra_mask; do
 #		file="$( basename "${extra_mask}" )"
 #		docker_extra_mounts+=( $( add_mount --print \
-#				"/etc/portage/package.mask/${file}"
+#				"/etc/portage/package.mask/${file}" \
+#				"/etc/portage/.package.mask.override/${file}"
 #			) )
 #	done < <( find /etc/portage/package.mask/ -mindepth 1 -maxdepth 1 -type f -not -name 'package.mask' | grep -v -- "repo-${ECLASS_OVERRIDE:-"__IGNORE__"}-mask" )
 #	unset file extra_mask
@@ -673,7 +680,7 @@ fi
 #
 docker_extra_mounts+=( $( add_mount --print \
 		'%base%/etc/portage/package.use/10_alternatives' \
-		'/etc/portage/package.use.override/10_alternatives'
+		'/etc/portage/.package.use.override/10_alternatives'
 	) ) || :
 
 # package.use host specialisation
@@ -682,11 +689,11 @@ for u in '01_package.use.local' '05_host.use'; do
 	if
 			! docker_extra_mounts+=( $( add_mount --print \
 					"/etc/portage/package.use/${u}" \
-					"/etc/portage/package.use.override/${u}"
+					"/etc/portage/.package.use.override/${u}"
 				) ) &&
 			! docker_extra_mounts+=( $( add_mount --print \
 					"%base%/etc/portage/package.use/${u}" \
-					"/etc/portage/package.use.override/${u}"
+					"/etc/portage/.package.use.override/${u}"
 				) )
 	then
 		note "No '${u}' override found in '/etc/portage/package.use/' or" \
@@ -697,14 +704,17 @@ done
 # package.use
 #
 docker_extra_mounts+=( $( add_mount --print \
-		"%base%/etc/portage/package.use/${package_name#*"."}"
+		"%base%/etc/portage/package.use/${package_name#*"."}" \
+		"/etc/portage/.package.use.override/${package_name#*"."}"
 	) ) || :
 if
 		! docker_extra_mounts+=( $( add_mount --print \
-				'%base%/etc/portage/package.use/00_package.use'
+				'%base%/etc/portage/package.use/00_package.use' \
+				'/etc/portage/.package.use.override/00_package.use'
 			) ) &&
 		! docker_extra_mounts+=( $( add_mount --dir --print \
-				'%base%/etc/portage/package.use'
+				'%base%/etc/portage/package.use' \
+				'/etc/portage/.package.use.override'
 			) )
 then
 	note "No 'package.use' override found in" \
@@ -718,19 +728,26 @@ if [[ -n "${arch:-}" ]] &&
 then
 	docker_extra_mounts+=( $( add_mount --print \
 			"%base%/etc/portage/profile/use.mask.${arch}" \
-			'/etc/portage/profile/use.mask'
+			'/etc/portage/.profile.override/use.mask'
 		) ) || :
 else
 	docker_extra_mounts+=( $( add_mount --print \
-			'%base%/etc/portage/profile/use.mask'
+			'%base%/etc/portage/profile/use.mask' \
+			'/etc/portage/.profile.override/use.mask'
 		) ) || :
 fi
 
 # package.use.force & package.use.mask
 #
 docker_extra_mounts+=( # <- Syntax
-		$( add_mount --print '%base%/etc/portage/profile/package.use.force' )
-		$( add_mount --print '%base%/etc/portage/profile/package.use.mask' )
+		$( add_mount --print \
+				'%base%/etc/portage/profile/package.use.force' \
+				'/etc/portage/.profile.override/package.use.force'
+			)
+		$( add_mount --print \
+				'%base%/etc/portage/profile/package.use.mask' \
+				'/etc/portage/.profile.override/package.use.mask'
+			)
 	) || :
 if [[ -d '/var/lib/portage/eclass/linux-info' ]]; then
 	docker_extra_mounts+=(
@@ -743,13 +760,15 @@ fi
 # python_targets
 #
 docker_extra_mounts+=( $( add_mount --print \
-		'%base%/etc/portage/package.use/20_python_targets'
+		'%base%/etc/portage/package.use/20_python_targets' \
+		'/etc/portage/.package.use.override/20_python_targets'
 	) ) || :
 
 # php_targets
 #
 docker_extra_mounts+=( $( add_mount --print \
-		'%base%/etc/portage/package.use/20_php_targets'
+		'%base%/etc/portage/package.use/20_php_targets' \
+		'/etc/portage/.package.use.override/20_php_targets'
 	) ) || :
 
 export DOCKER_EXTRA_MOUNTS="${docker_extra_mounts[*]:-}"
