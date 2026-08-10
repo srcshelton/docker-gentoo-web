@@ -77,7 +77,7 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 	#
 	if [ "$( uname -s )" != 'Darwin' ]; then
 		if [ -n "${PODMAN_TMPDIR:-}" ]; then
-			[[ -z "${debug:-}" ]] ||
+			[ -z "${debug:-}" ] ||
 				echo >&2 "DEBUG: Setting PODMAN_TMPDIR ('${PODMAN_TMPDIR}')" \
 					"as temporary directory ..."
 		else
@@ -526,7 +526,7 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 			# of the big cores...
 			rust_target_opts="-C target-cpu=${target_cpu#*"."}" ;;
 
-		*': 0xd81'|*': Radxa Orion O6'*|*': CIX P1 CD8180'|*': SKY1'*)
+		*': 0xd81'|*': Radxa Orion O6'*|*': CIX P1 '*|*': SKY1'*)
 			# N.B. In the default CIX patches, 'SKY1' is followed by whitespace
 			#
 			# ARMv9, big.LITTLE
@@ -855,7 +855,7 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 
 	# Set build targets for multi-SLOT packages...
 	#
-	python_default_target='python3_13'
+	python_default_target='python3_14'
 	export python_default_target
 
 	php_default_target='php8-3'
