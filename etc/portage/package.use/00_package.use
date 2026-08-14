@@ -5,7 +5,7 @@
 # Keep the following in sync with common/vars.sh
 #
 
-*/*					-* asm ipv6 ktls mdev multiarch native-extensions split-usr ssp threads # ${use_cpu_flags}  # from 'use-essential'
+*/*					-* asm ipv6 ktls mdev multiarch native-extensions split-usr ssp threads  # ${use_cpu_flags}  # from 'use-essential'
 
 # 'nptl' has now been removed, and 'pch' is masked by default due to build failures...
 #
@@ -35,6 +35,6 @@ sys-apps/portage			-rsync-verify -tmpfiles -xattr
 sys-apps/sed				-acl
 #sys-auth/pambase			-debug -passwdqc -sha512 pwquality yescrypt  # mktemp
 sys-auth/pambase			-debug -passwdqc -sha512 mktemp pwquality yescrypt
-sys-devel/gcc				-cet -nls default-stack-clash-protection default-znow lto pgo ssp zstd
+sys-devel/gcc				-jit -nls -sanitize -vtv default-stack-clash-protection default-znow lto pgo ssp zstd  # graphite openmp
 sys-libs/glibc				 clone3 compile-locales minimal multiarch ssp timezone-tools
 www-servers/lighttpd			 brotli dbi nettle pcre php ssl webdav xattr zlib zstd

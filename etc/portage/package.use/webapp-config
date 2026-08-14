@@ -4,7 +4,7 @@
 #      will actually be used to interpret the webapp when accessed via a
 #      browser.
 
-*/*										-apng -cet -nls -svg -xattr truetype
+*/*										-apng -nls -svg -xattr truetype
 
 app-admin/webapp-config					 lighttpd
 sys-apps/busybox						 make-symlinks mdev static

@@ -257,7 +257,7 @@ pre_pkgs+=' www-servers/lighttpd virtual/httpd-cgi virtual/httpd-fastcgi'
 pre_pkgs+=' virtual/httpd-php'
 pre_use="$( replace_flags \
 			"${use_essential_gcc:-}" \
-			'-cet' '-lib-only' '-nls' \
+			'-lib-only' '-nls' \
 			'fpm' 'gawk' 'internal-glib' 'pcre' 'ssl' 'unicode' \
 			"php_targets_${php_target}" \
 			"python_targets_${python_target}" \
@@ -486,6 +486,22 @@ esac
 
 if [[ -z "${post_use:-}" && -n "${with_use:-}" ]]; then
 	post_use="$( replace_flags 'lib-only' 'openmp' -- "${with_use}" )"
+fi
+
+case "${ARCH:-"${arch:-"$( uname -m )"}"}" in
+	'amd64'|'x86_64')
+		if ! grep -Fiqw 'cet' /proc/cpuinfo; then
+			pre_use="$( replace_flags '-cet' -- "${pre_use}" )"
+			with_use="$( replace_flags '-cet' -- "${with_use}" )"
+			post_use="$( replace_flags '-cet' -- "${post_use}" )"
+		fi
+		;;
+esac
+if ! [[ " ${pre_use} ${with_use} ${post_use} " == *'-cet '*'-cet '*'-cet '* ]]
+then
+	pre_use="$( replace_flags 'cet' -- "${pre_use}" )"
+	with_use="$( replace_flags 'cet' -- "${with_use}" )"
+	post_use="$( replace_flags 'cet' -- "${post_use}" )"
 fi
 
 if echo " ${use_essential:-} ${use_essential_gcc:-}" \

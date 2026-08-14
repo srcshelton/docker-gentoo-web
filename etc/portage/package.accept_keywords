@@ -16,20 +16,23 @@ www-apps/wordpress					~amd64
 # Roundcube
 #
 
-=dev-php/PEAR-Auth_SASL-1.0.6				~amd64
+#=dev-php/PEAR-Auth_SASL-1.2.0				~amd64
 #=dev-php/PEAR-Mail_Mime-1.8.2				~amd64
 #=dev-php/PEAR-Mail_Mime-1.9.0				~amd64
 #=dev-php/PEAR-Net_SMTP-1.6.1				~amd64
-=dev-php/PEAR-Net_IDNA2-0.1.1				~amd64
-=dev-php/PEAR-MDB2-2.5.0_beta3				~amd64
-=dev-php/PEAR-MDB2_Driver_mysqli-1.5.0_beta3		~amd64
-=dev-php/PEAR-MDB2_Driver_mysql-1.5.0_beta3		~amd64
-=dev-php/PEAR-MDB2_Driver_sqlite-1.5.0_beta3		~amd64
-#=dev-php/PEAR-Crypt_GPG-1.4.0_beta4			~amd64
-=dev-php/PEAR-Console_CommandLine-1.2.0			~amd64
+#=dev-php/PEAR-Crypt_GPG-1.6.11				~amd64
+#=dev-php/PEAR-Console_CommandLine-1.2.6		~amd64
+#
+# Dead:
+#=dev-php/PEAR-Net_IDNA2-0.1.1				~amd64
+#=dev-php/PEAR-MDB2-2.5.0_beta3				~amd64
+#=dev-php/PEAR-MDB2_Driver_mysqli-1.5.0_beta3		~amd64
+#=dev-php/PEAR-MDB2_Driver_mysql-1.5.0_beta3		~amd64
+#=dev-php/PEAR-MDB2_Driver_sqlite-1.5.0_beta3		~amd64
 
-~dev-php/pecl-imagick-3.8.0				~amd64
-~dev-php/pecl-memcache-4.0.5.2				~amd64
+~dev-php/pecl-imagick-3.8.1				~amd64
+#~dev-php/pecl-memcache-4.0.5.2				~amd64
+~dev-php/pecl-memcache-8.2				~amd64
 
 # required by mail-client/roundcube-1.2_beta[php_targets_php7-0]
 ~dev-php/PEAR-PEAR-1.10.1				~amd64
