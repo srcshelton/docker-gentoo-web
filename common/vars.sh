@@ -1,67 +1,26 @@
 #! /bin/sh
 # shellcheck disable=SC2034
 
-# Are we using docker or podman?
-#
-# N.B. This is overridden if/when common/run.sh is included
-#
-if [ -z "${_command:-}" ]; then
-	if [ "$( uname -s )" = 'Darwin' ] && command -v container >/dev/null 2>&1
-	then
-		_command='container'
-
-		#extra_build_args=''
-		docker_readonly='readonly'
-	elif command -v podman >/dev/null 2>&1; then
-		_command='podman'
-
-		#extra_build_args='--format docker'
-		# From release 2.0.0, podman should accept docker 'readonly'
-		# attributes
-		docker_readonly='ro=true'
-	elif command -v docker >/dev/null 2>&1; then
-		_command='docker'
-
-		#extra_build_args=''
-		docker_readonly='readonly'
-	else
-		echo >&2 "FATAL: Cannot find 'docker' or 'podman' executable in path" \
-			"while sourcing common/vars.sh"
+if ! command -v container_engine_help >/dev/null 2>&1 ||
+		! command -v container_engine_run >/dev/null 2>&1
+then
+	if ! [ -s ./common/container-engine-helpers.sh ]; then
+		echo >&2 "FATAL: Cannot locate 'common/container-engine-helpers.sh'"
 		exit 1
 	fi
-	export _command docker_readonly
+	# shellcheck disable=SC1091
+	. ./common/container-engine-helpers.sh
 fi
 
-APPLE_CONTAINER_MIN_VERSION='1.0.0'
-if [ "${_command}" = 'container' ]; then
-	_container_version_output="$( command container --version 2>/dev/null || : )"
-	_container_version="$(
-		printf '%s\n' "${_container_version_output}" |
-			sed -n 's/.* version \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p'
-	)"
-	if [ -z "${_container_version}" ]; then
-		echo >&2 "WARN:  Unable to determine Apple 'container' version from" \
-			"'${_container_version_output:-unknown output}'; minimum supported" \
-			"version is ${APPLE_CONTAINER_MIN_VERSION}"
-	elif awk \
-			-v installed="${_container_version}" \
-			-v minimum="${APPLE_CONTAINER_MIN_VERSION}" '
-			function number(version, fields) {
-				split(version, fields, ".")
-				return (fields[1] * 1000000) + (fields[2] * 1000) + fields[3]
-			}
-			BEGIN { exit !(number(installed) < number(minimum)) }
-		' </dev/null
-	then
-		echo >&2 "FATAL: Apple 'container' ${_container_version} is unsupported;" \
-			"version ${APPLE_CONTAINER_MIN_VERSION} or later is required"
-		echo >&2 "       Please upgrade Apple 'container' to" \
-			"${APPLE_CONTAINER_MIN_VERSION} or later"
-		exit 1
-	fi
-	unset _container_version _container_version_output
-fi
-export APPLE_CONTAINER_MIN_VERSION
+APPLE_CONTAINER_MIN_VERSION='1.3.0'
+PODMAN_MIN_VERSION='3.4.4'
+PODMAN_MACOS_MIN_VERSION='4.0.3'
+CRUN_MIN_VERSION='1.0.0'
+DOCKER_MIN_VERSION='18.06.0'
+DOCKER_MIN_API_VERSION='1.38'
+export APPLE_CONTAINER_MIN_VERSION PODMAN_MIN_VERSION
+export PODMAN_MACOS_MIN_VERSION CRUN_MIN_VERSION
+export DOCKER_MIN_VERSION DOCKER_MIN_API_VERSION
 
 # Guard to ensure that we don't accidentally reset the values below through
 # multiple inclusion - 'unset __COMMON_VARS_INCLUDED' if this is explcitly
@@ -69,79 +28,6 @@ export APPLE_CONTAINER_MIN_VERSION
 #
 if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 	export __COMMON_VARS_INCLUDED=1
-
-	# Since we're now using '${_command} system info' to determine the
-	# graphRoot directory, we need to be root solely to setup the environment
-	# appropriately :(
-	#
-	_graphroot=''
-	_output=''
-	_rc=0
-	if ! [ -x "$( command -v "${_command}" )" ]; then
-		echo >&2 "FATAL: Cannot locate binary '${_command}'"
-		exit 1
-	elif [ "${_command}" = 'container' ]; then
-		if ! _output="$( "${_command}" system status 2>&1 )"; then
-			# macOS 'container' has a 'system status' command, but not
-			# 'system info'
-			_rc=${?}
-			echo >&2 "${_output:-"FATAL: Unknown error"}"
-			echo >&2 "FATAL: Unable to successfully execute '${_command}'" \
-				"(${_rc}) - do you need to run '${_command} system start'?"
-			exit 1
-		fi
-	elif ! _output="$( "${_command}" system info 2>&1 )"; then
-		_rc=${?}
-		echo >&2 "${_output:-"FATAL: Unknown error"}"
-		if [ "${_command}" = 'podman' ]; then
-			echo >&2 "FATAL: Unable to successfully execute '${_command}'" \
-				"(${_rc}) - do you need to run '${_command} machine start'" \
-				"or re-run '$( basename "${0}" )' as 'root'?"
-		else
-			echo >&2 "FATAL: Unable to successfully execute '${_command}'" \
-				"(${_rc}) - do you need to re-run '$( basename "${0}" )'" \
-				"as 'root'?"
-		fi
-		exit 1
-	elif [ "$( uname -s )" != 'Darwin' ] &&
-			[ $(( $( id -u ) )) -ne 0 ] &&
-			echo "${_output}" | grep -Fq -- 'rootless: false'
-	then
-		echo >&2 "FATAL: Please re-run '$( basename "${0}")' as user 'root'"
-		exit 1
-	fi
-	_graphroot="$( # <- Syntax
-			echo "${_output}" |
-				grep -E -- '(graphRoot|Docker Root Dir):' |
-				cut -d':' -f 2- |
-				awk '{print $1}'
-		)" || :
-
-	# Optional override to specify alternative build-only temporary
-	# directory...
-	#
-	# N.B. If 'pam_mktemp.so' is in-use then there will always be a set 'TMP'
-	#      and 'TMPDIR' in the environment.
-	#
-	if [ "$( uname -s )" != 'Darwin' ]; then
-		if [ -n "${PODMAN_TMPDIR:-}" ]; then
-			[ -z "${debug:-}" ] ||
-				echo >&2 "DEBUG: Setting PODMAN_TMPDIR ('${PODMAN_TMPDIR}')" \
-					"as temporary directory ..."
-		else
-			if [ -z "${_graphroot:-}" ]; then
-				echo >&2 "FATAL: Cannot determine ${_command} root directory"
-				exit 1
-			fi
-		fi
-
-		_tmp="${PODMAN_TMPDIR:-"${_graphroot}"}/tmp"
-		mkdir -p "${_tmp:="/var/lib/containers/storage/tmp"}"
-		export TMPDIR="${_tmp}"
-		export TMP="${_tmp}"
-		unset _tmp
-	fi
-	unset _rc _output _graphroot
 
 	# Alerting options...
 	#
@@ -200,10 +86,8 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 	# mostly portage build-logs (by volume).
 	#
 	portage_log_dir="${PORTAGE_LOGDIR:-"${PORT_LOGDIR:-"$( # <- Syntax
-			emerge --info 2>&1 |
-				grep -E -- '^PORT(AGE)?_LOGDIR=' |
-				head -n 1 |
-				cut -d'"' -f 2 || :
+			command -v portageq >/dev/null 2>&1 &&
+				portageq envvar PORTAGE_LOGDIR 2>/dev/null || :
 		)"}"}"
 	log_dir="${portage_log_dir:-"/var/log/portage"}/containers"
 	unset portage_log_dir
@@ -298,10 +182,20 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 	#
 	use_cpu_arch='' use_cpu_flags='' use_cpu_flags_raw=''
 	target_cpu='' machine_arch=''
-	cc_target_opts='-march=native' rust_target_opts=''
-	description='' vendor='' rpi_model=''
+	cc_target_opts='' rust_target_opts=''
+	compiler_family='gcc' cpu_target_source='model'
+	cpu_exposed_features='' cpu_detected_use_flags=''
+	cpu_target_baseline_flags='' cpu_target_missing=''
+	description='' rpi_model=''
 	# rpi-cm rpi-cm2 rpi-cm3 rpi-cm4s
 	# rpi0 rpi02 rpi2 rpi3 rpi4 rpi400 rpi-cm4 rpi5 rpi-cm5 rpi500
+
+	# shellcheck disable=SC1091
+	. ./common/cpu-target.sh
+	if ! command -v cpu_target_set_generic >/dev/null 2>&1; then
+		echo >&2 "FATAL: Unable to source deterministic CPU-target helpers"
+		exit 1
+	fi
 
 	machine_arch="$( uname -m )"
 	case "${machine_arch:-}" in
@@ -313,11 +207,18 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 			;;
 	esac
 
+	cpu_exposed_features="$( cpu_target_proc_features )"
 	if command -v cpuid2cpuflags >/dev/null 2>&1; then
-		use_cpu_flags="$( cpuid2cpuflags | cut -d':' -f 2- )"
+		cpu_detected_use_flags="$( cpuid2cpuflags | cut -d':' -f 2- )"
+	elif [ -n "${use_cpu_arch:-}" ]; then
+		cpu_detected_use_flags="$( # <- Syntax
+			cpu_target_gentoo_flags "${cpu_exposed_features}" \
+				"/var/db/repo/gentoo/profiles/desc/cpu_flags_${use_cpu_arch}.desc"
+		)"
 	fi
 
 	if [ -n "${CPU_OVERRIDE:-}" ]; then
+		cpu_target_source='override'
 		 case "${CPU_OVERRIDE}" in
 			'rpi02'|'Raspberry Pi Zero 2')
 				description='x: Raspberry Pi Zero 2 W x'
@@ -334,7 +235,9 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 	else
 		# N.B. 'uname -s' returns 'Linux' in Darwin podman-machine...
 		if [ "$( uname -s )" = 'Darwin' ]; then
-			description="$( sysctl -n machdep.cpu.brand_string )"
+			description="$(
+				sysctl -n machdep.cpu.brand_string 2>/dev/null || uname -m
+			)"
 		elif [ -s /sys/firmware/devicetree/base/model ]; then
 			description="$( # <- Syntax
 				printf ': '
@@ -376,8 +279,9 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 		fi
 	fi
 
-	# Find '-march=native' flags:
-	# diff <(g++ -march=<arch> -Q --help=target --help=params) <(g++ -march=native -Q --help=target --help=params)
+	# These named targets were originally derived by comparing GCC target and
+	# parameter dumps for each processor.  Keep them explicit so builds remain
+	# portable across package-cache users and distributed compiler workers.
 	case "${description:-}" in
 		*': Intel(R) Atom(TM) CPU '*' 330 '*' @ '*)
 			use_cpu_arch='x86'
@@ -659,93 +563,49 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 			esac
 			;;
 		*)
+			cpu_target_source='generic'
 			description="$( # <- Syntax
 				echo "${description}" |
 					cut -d':' -f 2- |
 					sed 's/^\s*// ; s/\s*$//'
 			)"
-			vendor="$( # <- Syntax
-				grep -- '^vendor_id' /proc/cpuinfo |
-					tail -n 1 |
-					awk -F': ' '{print $2}'
-			)" || :
-			if [ -z "${vendor:-}" ]; then
-				vendor="$( # <- Syntax
-					grep -- '^CPU implementer' /proc/cpuinfo |
-						tail -n 1 |
-						awk -F': ' '{print $2}'
-				)"
-			fi
-			if [ -r /proc/cpuinfo ]; then
-				case "${vendor}" in
-					GenuineIntel)
-						#echo >&2 "INFO:  Attempting to auto-discover CPU '${description}' capabilities..."
-						use_cpu_arch='x86'
-
-						if
-							[ -f /var/db/repo/gentoo/profiles/desc/cpu_flags_x86.desc ] &&
-							[ -s /var/db/repo/gentoo/profiles/desc/cpu_flags_x86.desc ]
-						then
-							use_cpu_flags=''
-
-							# FIXME: Hard-coded /var/db/repo/gentoo...
-							while read -r line; do
-								echo "${line}" |
-										grep -q -- ' - ' ||
-									continue
-
-								flag="$( # <- Syntax
-										echo "${line}" |
-											awk -F' - ' '{print $1}'
-									)"
-								if echo "${line}" |
-										grep -- "^${flag} - " |
-										grep -Fq -- '['
-								then
-									count=2
-									while true; do
-										extra="$( # <- Syntax
-												echo "${line}" |
-													awk -F'[' \
-														"{print \$${count}}" |
-													cut -d']' -f 1
-											)"
-										if [ -n "${extra:-}" ]; then
-											flag="${flag}|${extra}"
-										else
-											break
-										fi
-										: $(( count = count + 1 ))
-									done
-									unset extra count
-								fi
-								use_cpu_flags="${use_cpu_flags:-}$( # <- Syntax
-										grep -E -- '^(Features|flags)' \
-													/proc/cpuinfo |
-												tail -n 1 |
-												awk -F': ' '{print $2}' |
-												grep -Eq -- "${flag}" &&
-											echo " ${flag}" |
-												cut -d'|' -f 1
-									)"
-							done < /var/db/repo/gentoo/profiles/desc/cpu_flags_x86.desc
-
-							use_cpu_flags="${use_cpu_flags#" "}"
-							echo >&2 "INFO:  Auto-discovered CPU feature-flags" \
-								"'${use_cpu_flags}'"
-						fi
-						;;
-				esac
-			fi
-
-			if [ -z "${use_cpu_flags:-}" ]; then
-				echo >&2 "WARN:  Unknown CPU '${description}' and" \
-					"'cpuid2cpuflags' not installed - not enabling" \
-					"model-specific CPU flags"
-			fi
 			;;
 	esac
-	unset vendor description
+
+	if [ "${cpu_target_source}" = 'model' ] &&
+			[ -n "${cpu_exposed_features:-}" ]
+	then
+		cpu_target_missing="$( # <- Syntax
+			cpu_target_missing_features "${cpu_exposed_features}" \
+				"$( cpu_target_required_features \
+					"${target_cpu}" "${cc_target_opts}" \
+					"${use_cpu_flags}" "${use_cpu_arch}" )"
+		)"
+		if [ -n "${cpu_target_missing}" ]; then
+			echo >&2 "WARN:  CPU model '${target_cpu}' requires features" \
+				"'${cpu_target_missing}' which the build runner does not expose;" \
+				"using a portable target"
+			cpu_target_source='generic-masked'
+			target_cpu='' cc_target_opts='' rust_target_opts=''
+			use_cpu_flags=''
+		fi
+	fi
+
+	if [ -z "${target_cpu:-}" ]; then
+		cpu_target_set_generic "${machine_arch}" || exit ${?}
+		use_cpu_flags="$( # <- Syntax
+			cpu_target_normalize_words \
+				"${cpu_target_baseline_flags:-} ${cpu_detected_use_flags:-}"
+		)"
+		echo >&2 "WARN:  CPU '${description:-unknown}' has no safe named" \
+			"build target; using portable compiler target '${cc_target_opts}'" \
+			"and Rust target '${rust_target_opts}'"
+	elif [ -z "${use_cpu_flags:-}" ] &&
+			[ -n "${cpu_detected_use_flags:-}" ]
+	then
+		use_cpu_flags="${cpu_detected_use_flags}"
+	fi
+	unset description cpu_target_baseline_flags cpu_target_missing
 
 	if [ -n "${use_cpu_flags:-}" ]; then
 		use_cpu_flags_raw="${use_cpu_flags}"
@@ -772,8 +632,11 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 	unset machine_arch
 
 	export use_cpu_arch use_cpu_flags use_cpu_flags_raw \
-		target_cpu \
-		cc_target_opts rust_target_opts
+		target_cpu compiler_family cpu_target_source \
+		cc_target_opts rust_target_opts cpu_exposed_features
+	echo >&2 "INFO:  Resolved CPU build profile: CPU_FLAGS_${use_cpu_arch:-unknown}='$use_cpu_flags_raw'," \
+		"target_cpu='${target_cpu}', source='${cpu_target_source}'," \
+		"compiler='${cc_target_opts}', rust='${rust_target_opts}'"
 
 	#
 	# End platform-specific variables
@@ -921,6 +784,49 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 	elif [ -s ./common/local.sh ]; then
 		# shellcheck disable=SC1091
 		. ./common/local.sh
+	fi
+
+	# Resolve the engine only after local overrides have established the image
+	# names and tag used to compare existing pipelines.
+	#
+	if ! [ -s ./common/container-engine.sh ]; then
+		echo >&2 "FATAL: Cannot locate 'common/container-engine.sh'"
+		exit 1
+	fi
+	# shellcheck disable=SC1091
+	. ./common/container-engine.sh
+
+	# Set the engine's build-only temporary directory.  Apple 'container' does
+	# not expose Docker/Podman-style storage information and does not need this
+	# override.
+	#
+	if [ "$( uname -s )" != 'Darwin' ]; then
+		_graphroot=''
+		_output="$(
+			container_engine_run "${_command}" system info 2>/dev/null
+		)" || :
+		_graphroot="$(
+			printf '%s\n' "${_output}" |
+				grep -E -- '(graphRoot|Docker Root Dir):' |
+				cut -d':' -f 2- |
+				awk '{print $1}'
+		)" || :
+
+		if [ -n "${PODMAN_TMPDIR:-}" ]; then
+			[ -z "${debug:-}" ] ||
+				echo >&2 "DEBUG: Setting PODMAN_TMPDIR ('${PODMAN_TMPDIR}')" \
+					"as temporary directory ..."
+		elif [ -z "${_graphroot:-}" ]; then
+			echo >&2 "FATAL: Cannot determine ${_container_engine} root" \
+				"directory"
+			exit 1
+		fi
+
+		_tmp="${PODMAN_TMPDIR:-"${_graphroot}"}/tmp"
+		mkdir -p "${_tmp:="/var/lib/containers/storage/tmp"}"
+		export TMPDIR="${_tmp}"
+		export TMP="${_tmp}"
+		unset _graphroot _output _tmp
 	fi
 fi
 
