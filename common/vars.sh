@@ -12,7 +12,7 @@ then
 	. ./common/container-engine-helpers.sh
 fi
 
-APPLE_CONTAINER_MIN_VERSION='1.3.0'
+APPLE_CONTAINER_MIN_VERSION='1.4.1'
 PODMAN_MIN_VERSION='3.4.4'
 PODMAN_MACOS_MIN_VERSION='4.0.3'
 CRUN_MIN_VERSION='1.0.0'
@@ -207,15 +207,55 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 			;;
 	esac
 
-	cpu_exposed_features="$( cpu_target_proc_features )"
-	if command -v cpuid2cpuflags >/dev/null 2>&1; then
-		cpu_detected_use_flags="$( cpuid2cpuflags | cut -d':' -f 2- )"
-	elif [ -n "${use_cpu_arch:-}" ]; then
-		cpu_detected_use_flags="$( # <- Syntax
-			cpu_target_gentoo_flags "${cpu_exposed_features}" \
-				"/var/db/repo/gentoo/profiles/desc/cpu_flags_${use_cpu_arch}.desc"
-		)"
+	if ! cpu_exposed_features="$( cpu_target_proc_features )"; then
+		cpu_flags_status=${?}
+		echo >&2 "FATAL: Unable to read host CPU capabilities from" \
+			"/proc/cpuinfo (status ${cpu_flags_status})"
+		exit "${cpu_flags_status}"
 	fi
+	if command -v cpuid2cpuflags >/dev/null 2>&1; then
+		if ! cpu_detected_use_flags="$( cpuid2cpuflags | cut -d':' -f 2- )"
+		then
+			cpu_flags_status=${?}
+			echo >&2 "FATAL: cpuid2cpuflags failed while detecting Gentoo" \
+				"CPU USE flags (status ${cpu_flags_status})"
+			exit "${cpu_flags_status}"
+		fi
+	elif [ -n "${use_cpu_arch:-}" ]; then
+		cpu_flags_repo='/var/db/repo/gentoo'
+		cpu_flags_description="${cpu_flags_repo}/profiles/desc"
+		cpu_flags_description="${cpu_flags_description}/cpu_flags_"
+		cpu_flags_description="${cpu_flags_description}${use_cpu_arch}.desc"
+		cpu_flags_status=0
+		# A non-Gentoo host may have neither 'cpuid2cpuflags' nor Portage
+		# metadata.  Keep that fallback optional, but enforce it once the
+		# Gentoo repository or host tooling says that its description should be
+		# available.
+		if [ -e "${cpu_flags_description}" ] ||
+				[ -L "${cpu_flags_description}" ]
+		then
+			if ! cpu_detected_use_flags="$( # <- Syntax
+						cpu_target_gentoo_flags "${cpu_exposed_features}" \
+							"${cpu_flags_description}"
+					)"
+			then
+				cpu_flags_status=${?}
+			fi
+		elif command -v portageq >/dev/null 2>&1 ||
+				[ -d "${cpu_flags_repo}" ] ||
+				[ -L "${cpu_flags_repo}" ]
+		then
+			cpu_flags_status=66 # EX_NOINPUT "cannot open input"
+		fi
+		if [ "${cpu_flags_status}" -ne 0 ]; then
+			echo >&2 "FATAL: Unable to derive Gentoo CPU USE flags from" \
+				"'${cpu_flags_description}' (status ${cpu_flags_status})"
+			echo >&2 "FATAL: Verify that this profile description is present," \
+				"readable, non-empty, and well-formed"
+			exit "${cpu_flags_status}"
+		fi
+	fi
+	unset cpu_flags_description cpu_flags_repo cpu_flags_status
 
 	if [ -n "${CPU_OVERRIDE:-}" ]; then
 		cpu_target_source='override'
@@ -313,6 +353,12 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 			target_cpu='skylake'
 			cc_target_opts="-march=${target_cpu} -mabm"
 			rust_target_opts="-C target-cpu=${target_cpu}" ;;
+		*': Intel(R) Xeon(R) Platinum 8370C CPU @ '*)
+			use_cpu_arch='x86'
+			use_cpu_flags='aes avx avx2 avx512_bitalg avx512_vbmi2 avx512_vnni avx512_vpopcntdq avx512bw avx512cd avx512dq avx512f avx512ifma avx512vbmi avx512vl bmi1 bmi2 f16c fma3 mmx mmxext pclmul popcnt rdrand sha sse sse2 sse3 sse4_1 sse4_2 ssse3 vpclmulqdq'
+			target_cpu='icelake-server'
+			cc_target_opts="-march=${target_cpu}"
+			rust_target_opts="-C target-cpu=${target_cpu}" ;;
 
 		*': AMD G-T40E '*)
 			use_cpu_arch='x86'
@@ -330,6 +376,12 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 			use_cpu_arch='x86'
 			use_cpu_flags='aes avx avx2 f16c fma3 mmx mmxext pclmul popcnt rdrand sha sse sse2 sse3 sse4_1 sse4_2 sse4a ssse3'
 			target_cpu='znver2'
+			cc_target_opts="-march=${target_cpu}"
+			rust_target_opts="-C target-cpu=${target_cpu}" ;;
+		*': AMD EPYC 7763 64-Core Processor'*)
+			use_cpu_arch='x86'
+			use_cpu_flags='aes avx avx2 f16c fma3 mmx mmxext pclmul popcnt rdrand sha sse sse2 sse3 sse4_1 sse4_2 sse4a ssse3 vaes vpclmulqdq'
+			target_cpu='znver3'
 			cc_target_opts="-march=${target_cpu}"
 			rust_target_opts="-C target-cpu=${target_cpu}" ;;
 		*': AMD EPYC 9R14')
@@ -522,6 +574,15 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 			target_cpu='neoverse-n1'
 			cc_target_opts="-mcpu=${target_cpu}"
 			rust_target_opts="-C target-cpu=${target_cpu}" ;;
+		*': 0xd49')
+			# Microsoft Azure Cobalt 100 identifies as part 0xd49 and is
+			# handled by Linux and LLVM as a Neoverse N2.  The stage3 GCC
+			# probe resolves any runtime feature masking.
+			use_cpu_arch='arm'
+			use_cpu_flags='edsp neon neon-fp16 thumb vfp vfpv3 vfpv4 vfp-d32 aes sha1 sha2 crc32 sm4 asimd asimddp asimdfhm asimdhp sve sve2 i8mm v4 v5 v6 v7 v8 thumb2'
+			target_cpu='neoverse-n2'
+			cc_target_opts="-mcpu=${target_cpu}"
+			rust_target_opts="-C target-cpu=${target_cpu}" ;;
 		*': 0xd40'|'AWS Graviton 3'*)
 			# Neoverse V1 ("Zeus"): armv8.4-a, "Graviton 3"
 			use_cpu_arch='arm'
@@ -634,9 +695,18 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 	export use_cpu_arch use_cpu_flags use_cpu_flags_raw \
 		target_cpu compiler_family cpu_target_source \
 		cc_target_opts rust_target_opts cpu_exposed_features
-	echo >&2 "INFO:  Resolved CPU build profile: CPU_FLAGS_${use_cpu_arch:-unknown}='$use_cpu_flags_raw'," \
-		"target_cpu='${target_cpu}', source='${cpu_target_source}'," \
-		"compiler='${cc_target_opts}', rust='${rust_target_opts}'"
+	# $(( ... )) should evaluate to zero if the variable is unset
+	# shellcheck disable=SC2153
+	if [ -n "${debug:-}" ] && [ $(( DEBUG )) -ne 0 ]; then
+		cpu_flags="$(
+				echo "CPU_FLAGS_${use_cpu_arch:-"x86"}" |
+					tr '[:lower:]' '[:upper:]'
+			)"
+		echo >&2 "DEBUG: Resolved CPU build profile:" \
+			"${cpu_flags}='$use_cpu_flags_raw'," \
+			"target_cpu='${target_cpu}', source='${cpu_target_source}'," \
+			"compiler='${cc_target_opts}', rust='${rust_target_opts}'"
+	fi
 
 	#
 	# End platform-specific variables
@@ -757,17 +827,6 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 	export MAXLOAD="${EMERGE_MAXLOAD:-"${load}.00"}"
 	unset load jobs
 
-	# Allow a separate image directory for persistent images...
-	#store="$( $_command system info | grep -F 'overlay.imagestore:' | cut -d':' -f 2- | awk '{print $1}' )"
-	#if [ -n "${store}" ]; then
-	#	export IMAGE_ROOT="${store}"
-	#	store="$( $_command system info | grep -- 'graphRoot:' | cut -d':' -f 2- | awk '{print $1}' )"
-	#	if [ -n "${store}" ]; then
-	#		export GRAPH_ROOT="${store}"
-	#	fi
-	#fi
-	#unset store
-
 	# Set build targets for multi-SLOT packages...
 	#
 	python_default_target='python3_14'
@@ -793,8 +852,21 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 		echo >&2 "FATAL: Cannot locate 'common/container-engine.sh'"
 		exit 1
 	fi
+	_command=''
+	_container_engine=''
 	# shellcheck disable=SC1091
 	. ./common/container-engine.sh
+
+	# Allow a separate image directory for persistent images...
+	#store="$( $_command system info | grep -F 'overlay.imagestore:' | cut -d':' -f 2- | awk '{print $1}' )"
+	#if [ -n "${store}" ]; then
+	#	export IMAGE_ROOT="${store}"
+	#	store="$( $_command system info | grep -- 'graphRoot:' | cut -d':' -f 2- | awk '{print $1}' )"
+	#	if [ -n "${store}" ]; then
+	#		export GRAPH_ROOT="${store}"
+	#	fi
+	#fi
+	#unset store
 
 	# Set the engine's build-only temporary directory.  Apple 'container' does
 	# not expose Docker/Podman-style storage information and does not need this
@@ -813,7 +885,7 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 		)" || :
 
 		if [ -n "${PODMAN_TMPDIR:-}" ]; then
-			[ -z "${debug:-}" ] ||
+			[ -z "${debug:-}" ] || [ $(( DEBUG )) -eq 0 ] ||
 				echo >&2 "DEBUG: Setting PODMAN_TMPDIR ('${PODMAN_TMPDIR}')" \
 					"as temporary directory ..."
 		elif [ -z "${_graphroot:-}" ]; then
@@ -822,11 +894,8 @@ if [ -z "${__COMMON_VARS_INCLUDED:-}" ]; then
 			exit 1
 		fi
 
-		_tmp="${PODMAN_TMPDIR:-"${_graphroot}"}/tmp"
-		mkdir -p "${_tmp:="/var/lib/containers/storage/tmp"}"
-		export TMPDIR="${_tmp}"
-		export TMP="${_tmp}"
-		unset _graphroot _output _tmp
+		container_engine_configure_tmpdir "${_graphroot}" || exit ${?}
+		unset _graphroot _output
 	fi
 fi
 
